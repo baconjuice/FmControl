@@ -1,0 +1,185 @@
+#pragma once
+
+// Controls bound to one patch parameter. They update themselves when the
+// edit buffer changes and write through the Session (which sends live edits).
+
+#include "model/AutomationLink.h"
+#include "model/MidiLearn.h"
+#include "model/ParamTarget.h"
+
+#include <juce_gui_basics/juce_gui_basics.h>
+
+#include <functional>
+
+namespace ui
+{
+using WriteOptionFn = std::function<uint8_t()>;
+using FormatFn = std::function<juce::String (int displayValue)>;
+
+// A widget whose right-click opens our MIDI learn menu instead of acting
+// like a left click (sliders would start a drag, buttons would toggle).
+template <class Base>
+class RightClickable : public Base
+{
+public:
+    using Base::Base;
+    std::function<void()> onPopupMenu;
+
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        swallowing = e.mods.isPopupMenu() && onPopupMenu != nullptr;
+        if (swallowing)
+            onPopupMenu();
+        else
+            Base::mouseDown (e);
+    }
+    void mouseDrag (const juce::MouseEvent& e) override
+    {
+        if (! swallowing) Base::mouseDrag (e);
+    }
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        if (! swallowing) Base::mouseUp (e);
+        swallowing = false;
+    }
+    void mouseDoubleClick (const juce::MouseEvent& e) override
+    {
+        if (! e.mods.isPopupMenu()) Base::mouseDoubleClick (e);
+    }
+
+private:
+    bool swallowing = false;
+};
+
+class ParamControl : public juce::Component,
+                     protected ParamTarget::Listener,
+                     private MidiLearn::Listener,
+                     private AutomationLink::Listener
+{
+public:
+    ParamControl (ParamTarget& s, const fm::ParamDef& d);
+    ~ParamControl() override;
+
+    virtual juce::Point<int> preferredSize() const = 0;
+    void setWriteOption (WriteOptionFn f) { writeOption = std::move (f); }
+    const fm::ParamDef& getDef() const { return def; }
+    void paintOverChildren (juce::Graphics&) override;
+
+protected:
+    void targetReplaced() override { refresh(); }
+    void targetChanged (const std::vector<uint16_t>& addresses) override;
+    virtual void refresh() = 0;
+
+    // MIDI learn: right-click menu, tooltip with the mapping, mapped marker.
+    void showLearnMenu();
+    void setBaseTooltip (juce::String t) { baseTooltip = std::move (t); updateTooltip(); }
+    virtual void applyTooltip (const juce::String&) {}
+    template <class W> void enableLearnMenu (W& widget) { widget.onPopupMenu = [this] { showLearnMenu(); }; }
+
+    void write (int raw);
+    int read() const { return session.getParam (def); }
+
+    ParamTarget& session;
+    const fm::ParamDef& def;
+    WriteOptionFn writeOption;
+
+private:
+    void midiLearnChanged() override;
+    void automationChanged() override { midiLearnChanged(); }
+    void updateTooltip();
+    int automationSlot() const;
+    MidiLearn* learn = nullptr;
+    AutomationLink* automation = nullptr;
+    juce::String baseTooltip;
+};
+
+class ParamKnob : public ParamControl
+{
+public:
+    ParamKnob (ParamTarget& s, const fm::ParamDef& d, juce::String label = {}, FormatFn format = {});
+    juce::Point<int> preferredSize() const override { return compact ? juce::Point<int> { 48, 50 } : juce::Point<int> { width, 78 }; }
+    void setPreferredWidth (int w) { width = w; }
+    void resized() override;
+    void refresh() override;
+    juce::Slider& getSlider() { return slider; }
+    void setCompact (bool c) { compact = c; title.setVisible (! c); resized(); }
+
+private:
+    void applyTooltip (const juce::String& t) override { slider.setTooltip (t); }
+    juce::Label title;
+    RightClickable<juce::Slider> slider;
+    FormatFn formatter;
+    bool compact = false;
+    int width = 60;
+};
+
+class ParamToggle : public ParamControl
+{
+public:
+    ParamToggle (ParamTarget& s, const fm::ParamDef& d, juce::String label = {});
+    juce::Point<int> preferredSize() const override;
+    void resized() override { button.setBounds (getLocalBounds()); }
+    void refresh() override { button.setToggleState (read() != 0, juce::dontSendNotification); }
+
+private:
+    void applyTooltip (const juce::String& t) override { button.setTooltip (t); }
+    RightClickable<juce::TextButton> button;
+};
+
+class ParamCombo : public ParamControl
+{
+public:
+    ParamCombo (ParamTarget& s, const fm::ParamDef& d, juce::String label = {}, int width = 120,
+                std::vector<std::string> customChoices = {});
+    juce::Point<int> preferredSize() const override { return { width, compact ? 24 : 42 }; }
+    void resized() override;
+    void refresh() override;
+    void setCompact (bool c) { compact = c; title.setVisible (! c); resized(); }
+
+private:
+    void applyTooltip (const juce::String& t) override { box.setTooltip (t); }
+    juce::Label title;
+    RightClickable<juce::ComboBox> box;
+    int width;
+    bool compact = false;
+};
+
+
+// A titled box that lays out its controls left to right, wrapping as needed.
+class ParamGroup : public juce::Component
+{
+public:
+    ParamGroup (ParamTarget& s, const fm::ParamTable& t, juce::String title, WriteOptionFn wopt = {});
+
+    ParamKnob& knob (const std::string& id, juce::String label = {}, FormatFn format = {});
+    ParamToggle& toggle (const std::string& id, juce::String label = {});
+    ParamCombo& combo (const std::string& id, juce::String label = {}, int width = 120,
+                       std::vector<std::string> customChoices = {});
+    void toggles (std::initializer_list<std::pair<std::string, juce::String>> idsAndLabels); // vertical stack
+    void lineBreak();
+    void gap (int width);
+
+    int preferredHeight (int forWidth) const;
+    void paint (juce::Graphics&) override;
+    void resized() override;
+
+    juce::String title;
+    int knobWidth = 0; // > 0: narrower knobs for tight layouts
+
+private:
+    struct Item
+    {
+        juce::Component* comp = nullptr;
+        juce::Point<int> size;
+        bool lineBreak = false;
+    };
+    int layout (int width, bool apply);
+    void addItem (std::unique_ptr<juce::Component> c, juce::Point<int> size);
+
+    ParamTarget& session;
+    const fm::ParamTable& table;
+    WriteOptionFn writeOption;
+    std::vector<std::unique_ptr<juce::Component>> owned;
+    std::vector<Item> items;
+};
+} // namespace ui
