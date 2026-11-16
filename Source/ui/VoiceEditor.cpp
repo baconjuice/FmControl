@@ -1,5 +1,6 @@
 #include "VoiceEditor.h"
 #include "LookAndFeel.h"
+#include "PixelFont.h"
 
 namespace ui
 {
@@ -40,6 +41,20 @@ void drawCurve (juce::Graphics& g, juce::Rectangle<float> r, const std::vector<j
     g.strokePath (path, juce::PathStrokeType (2.0f));
 }
 
+// Black "scope" screen with a dotted grid, behind graphs and diagrams.
+void drawScope (juce::Graphics& g, juce::Rectangle<float> r)
+{
+    g.setColour (colours::shadow);
+    g.fillRect (r);
+    g.setColour (colours::panelEdge.withAlpha (0.55f));
+    g.drawRect (r, 1.0f);
+    g.setColour (colours::panelEdge.withAlpha (0.4f));
+    const int step = 8;
+    for (float y = r.getY() + (float) step; y < r.getBottom() - 1.0f; y += (float) step)
+        for (float x = r.getX() + (float) step; x < r.getRight() - 1.0f; x += 2.0f * step / 4.0f)
+            g.fillRect (std::round (x), std::round (y), 1.0f, 1.0f);
+}
+
 class Listening : public juce::Component,
                   protected ParamTarget::Listener
 {
@@ -67,8 +82,7 @@ public:
     void paint (juce::Graphics& g) override
     {
         auto r = getLocalBounds().toFloat().reduced (1.0f);
-        g.setColour (colours::background);
-        g.fillRoundedRectangle (r, 4.0f);
+        drawScope (g, r);
 
         const int algo = v ("algorithm");
         // Chains of operators (0-based) that are summed at the output.
@@ -93,12 +107,12 @@ public:
                 const int op = chain[i];
                 juce::Rectangle<float> box (x, y, boxW, boxH);
                 const bool carrier = i == chain.size() - 1;
-                g.setColour (carrier ? colours::accent2.withAlpha (0.25f) : colours::accent.withAlpha (0.22f));
-                g.fillRoundedRectangle (box, 4.0f);
-                g.setColour (carrier ? colours::accent2 : colours::accent);
-                g.drawRoundedRectangle (box, 4.0f, 1.5f);
-                g.setColour (colours::text);
-                g.drawText ("OP" + juce::String (op + 1), box, juce::Justification::centred);
+                g.setColour (colours::panelEdge.darker (0.6f));
+                g.fillRect (box.translated (3.0f, 3.0f));
+                g.setColour (carrier ? colours::accent2 : colours::text);
+                g.fillRect (box);
+                g.setColour (colours::onAccent);
+                pixel::draw (g, "OP" + juce::String (op + 1), box, 2.0f, juce::Justification::centred);
 
                 if (op == 0 && fb > 0) // feedback loop over OP1
                 {
@@ -141,8 +155,7 @@ public:
     void paint (juce::Graphics& g) override
     {
         auto r = getLocalBounds().toFloat().reduced (1.0f);
-        g.setColour (colours::background);
-        g.fillRoundedRectangle (r, 4.0f);
+        drawScope (g, r);
         r = r.reduced (6.0f, 6.0f);
 
         auto len = [] (int rate) { return 0.04f + (float) rate / 15.0f; };
@@ -267,8 +280,7 @@ public:
     void paint (juce::Graphics& g) override
     {
         auto r = getLocalBounds().toFloat().reduced (1.0f);
-        g.setColour (colours::background);
-        g.fillRoundedRectangle (r, 4.0f);
+        drawScope (g, r);
         r = r.reduced (8.0f);
         auto len = [] (int rate) { return 0.04f + (float) rate / 127.0f; };
         auto lvl = [] (int l) { return (float) l / 127.0f; };
@@ -293,8 +305,7 @@ public:
     void paint (juce::Graphics& g) override
     {
         auto r = getLocalBounds().toFloat().reduced (1.0f);
-        g.setColour (colours::background);
-        g.fillRoundedRectangle (r, 4.0f);
+        drawScope (g, r);
         r = r.reduced (8.0f, 10.0f);
         const bool on = v (p + ".on") != 0;
         const int wave = v (p + ".wave");
@@ -460,6 +471,8 @@ public:
         const int pw = paramWidth();
         g.setFont (font (12.0f, true));
         g.setColour (colours::accent2);
+        g.fillRect (0, kHeaderH - 2, getWidth(), 1);
+        g.fillRect (0, kHeaderH - 4, getWidth(), 1);
         g.drawText ("Step", 0, 0, kStepW, kHeaderH, juce::Justification::centred);
         g.drawText ("Command", kStepW, 0, kCmdW, kHeaderH, juce::Justification::centred);
         for (int k = 1; k <= 3; ++k)
@@ -476,18 +489,22 @@ public:
             const int y = kHeaderH + s * kRowH;
             const auto p = "wt." + std::to_string (s);
             const int cmd = v (p + ".cmd");
-            if (s % 2) { g.setColour (colours::background.withAlpha (0.35f)); g.fillRect (0, y, getWidth(), kRowH); }
+            // Tracker rows: every 4th row is highlighted, step numbers in hex.
+            if (s % 4 == 0) { g.setColour (colours::panelEdge.withAlpha (0.35f)); g.fillRect (0, y, getWidth(), kRowH); }
 
-            g.setFont (font (12.0f));
-            g.setColour (ended ? colours::panelEdge : colours::dimText);
-            g.drawText (juce::String (s), 0, y, kStepW, kRowH, juce::Justification::centred);
+            g.setFont (font (12.0f, s % 4 == 0));
+            g.setColour (ended ? colours::panelEdge : (s % 4 == 0 ? colours::accent : colours::dimText));
+            g.drawText (juce::String::toHexString (s).toUpperCase().paddedLeft ('0', 2), 0, y, kStepW, kRowH,
+                        juce::Justification::centred);
 
             static const juce::Colour cmdColours[] = { colours::panelEdge, colours::accent, colours::accent2, colours::bad };
             auto cmdBox = juce::Rectangle<int> (kStepW, y, kCmdW, kRowH).reduced (3, 2).toFloat();
-            g.setColour (cmdColours[cmd].withAlpha (cmd == 0 ? 0.5f : 0.35f));
-            g.fillRoundedRectangle (cmdBox, 3.0f);
-            g.setColour (cmd == 0 ? colours::dimText : colours::text);
-            g.drawText (fm::wtCommands()[(size_t) cmd], cmdBox, juce::Justification::centred);
+            g.setColour (colours::background);
+            g.fillRect (cmdBox);
+            g.setColour (cmd == 0 ? colours::panelEdge : cmdColours[cmd]);
+            g.setFont (font (12.0f, cmd != 0));
+            g.drawText (cmd == 0 ? juce::String ("---") : juce::String (fm::wtCommands()[(size_t) cmd]).toUpperCase(), cmdBox,
+                        juce::Justification::centred);
 
             for (int k = 1; k <= 3; ++k)
             {
@@ -498,7 +515,7 @@ public:
                 const bool gotoTarget = cmd == 2 && k == 1;
 
                 g.setColour (colours::background);
-                g.fillRoundedRectangle (cell.toFloat(), 3.0f);
+                g.fillRect (cell.toFloat());
                 if (gotoTarget)
                 {
                     g.setColour (colours::accent2);
@@ -510,7 +527,7 @@ public:
                     continue;
                 auto tag = cell.removeFromLeft (34);
                 g.setColour ((abs ? colours::accent2 : colours::accent).withAlpha (active ? 0.4f : 0.15f));
-                g.fillRoundedRectangle (tag.toFloat().reduced (2.0f, 1.0f), 3.0f);
+                g.fillRect (tag.toFloat().reduced (2.0f, 1.0f));
                 g.setColour (active ? colours::text : colours::dimText);
                 g.setFont (font (10.5f, true));
                 g.drawText (abs ? "ABS" : "REL", tag, juce::Justification::centred);

@@ -17,7 +17,8 @@ add_library(fm_core STATIC
     Source/fm/Params.cpp
     Source/fm/CcNames.cpp
     Source/fm/SysEx.cpp
-    Source/fm/SyxFile.cpp)
+    Source/fm/SyxFile.cpp
+    Source/fm/Randomizer.cpp)
 target_include_directories(fm_core PUBLIC Source)
 target_compile_features(fm_core PUBLIC cxx_std_20)
 
@@ -36,16 +37,20 @@ juce_add_plugin(FmControl
     NEEDS_MIDI_OUTPUT TRUE
     IS_MIDI_EFFECT FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS TRUE
-    COPY_PLUGIN_AFTER_BUILD FALSE)
+    COPY_PLUGIN_AFTER_BUILD FALSE
+    ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/Resources/icon.png")
 
 target_sources(FmControl PRIVATE
     Source/PluginProcessor.cpp
     Source/PluginEditor.cpp
     Source/device/FmDevice.cpp
     Source/device/PacedSysEx.cpp
+    Source/plugin/Automation.cpp
     Source/model/Session.cpp
     Source/model/MidiLearn.cpp
     Source/ui/LookAndFeel.cpp
+    Source/ui/RandomPanel.cpp
+    Source/ui/PixelFont.cpp
     Source/ui/ParamControls.cpp
     Source/ui/EditorCommon.cpp
     Source/ui/ConnectionBar.cpp
@@ -83,3 +88,34 @@ target_sources(fmcli PRIVATE Tools/FmCli.cpp Source/device/FmDevice.cpp Source/d
 target_compile_definitions(fmcli PRIVATE JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0 JUCE_MODAL_LOOPS_PERMITTED=1)
 target_link_libraries(fmcli PRIVATE fm_core juce::juce_audio_devices juce::juce_events juce::juce_data_structures
                       juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
+
+# DAW automation slots (no host needed)
+juce_add_console_app(automation_tests PRODUCT_NAME "automation_tests")
+target_sources(automation_tests PRIVATE Tests/AutomationTests.cpp Source/plugin/Automation.cpp Source/device/FmDevice.cpp
+               Source/device/PacedSysEx.cpp Source/model/Session.cpp Source/model/MidiLearn.cpp)
+target_include_directories(automation_tests PRIVATE Source)
+target_compile_definitions(automation_tests PRIVATE JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0 JUCE_MODAL_LOOPS_PERMITTED=1)
+target_link_libraries(automation_tests PRIVATE fm_core juce::juce_audio_processors juce::juce_audio_devices
+                      juce::juce_data_structures juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
+add_test(NAME automation_tests COMMAND automation_tests)
+
+# MIDI learn end to end (no ports needed)
+juce_add_console_app(learn_tests PRODUCT_NAME "learn_tests")
+target_sources(learn_tests PRIVATE Tests/LearnTests.cpp Source/device/FmDevice.cpp Source/device/PacedSysEx.cpp
+               Source/model/Session.cpp Source/model/MidiLearn.cpp)
+target_include_directories(learn_tests PRIVATE Source)
+target_compile_definitions(learn_tests PRIVATE JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0 JUCE_MODAL_LOOPS_PERMITTED=1)
+target_link_libraries(learn_tests PRIVATE fm_core juce::juce_audio_devices juce::juce_data_structures
+                      juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
+add_test(NAME learn_tests COMMAND learn_tests)
+
+# Sign each bundle (ad-hoc) as the very last build step, so the signature
+# always covers the final contents (icon, moduleinfo). Without this a host
+# like Ableton rejects the VST3 with "a sealed resource is missing or invalid".
+if(APPLE)
+    foreach(fmt Standalone AU VST3)
+        add_custom_command(TARGET FmControl_${fmt} POST_BUILD
+            COMMAND codesign --force --sign - --timestamp=none "$<TARGET_BUNDLE_DIR:FmControl_${fmt}>"
+            VERBATIM)
+    endforeach()
+endif()

@@ -39,6 +39,12 @@ public:
     uint8_t getByte (int addr) const override { return edit().byte (addr); }
     int defaultRaw (const fm::ParamDef& p) const override { return fm::Patch::makeInit().getRaw (p); }
     void setName (const juce::String& name);
+    int automationScope() const override { return editVoice; }
+
+    // Parameters of any voice (DAW automation drives voices that may not be
+    // the one being edited).
+    int getVoiceParam (int voice, const fm::ParamDef& p) const { return voices[(size_t) (voice & 3)].getRaw (p); }
+    void setVoiceParam (int voice, const fm::ParamDef& p, int raw);
 
     // Replace the edited voice's patch (sends it to the box when live).
     void loadIntoEditor (const fm::Patch& p, int fromSlot = -1);
@@ -49,6 +55,12 @@ public:
 
     void sendEditBuffer();
     void fetchEditBuffer();
+
+    // Random generator (like the box's RND menu) for the edited voice. Keeps
+    // the previous patches per voice so a roll can be undone.
+    void randomize (const std::string& section, float amount);
+    bool canUndoRandom() const { return ! randomHistory[(size_t) editVoice].empty(); }
+    void undoRandom();
     void storeVoiceOnBox();             // the box's own "store" for the edited voice
     void playNote (bool on);            // Play button: middle C on the edited voice's channel
     void allNotesOff();
@@ -113,6 +125,7 @@ private:
     void fetchNext (int i, int endExclusive, int got, int failed);
     void writeNext (std::vector<int> remaining, int done, int failed, int total);
     void updateKeyboardChannel();
+    void sendEditBufferSoon(); // quick repeated rolls only send the last result
 
     std::array<fm::Patch, fm::kVoices> voices;
     std::array<bool, fm::kVoices> voiceKnown {};   // fetched from / sent to the box
@@ -121,6 +134,9 @@ private:
     bool live = true;
     bool followVoice = true;
     int playingNoteChannel = 0;
+    std::array<std::vector<fm::Patch>, fm::kVoices> randomHistory;
+    std::mt19937 rng { std::random_device{}() };
+    int sendGeneration = 0;
 
     std::array<std::optional<fm::Patch>, kSlots> slots;
     int bankNumber = 0;

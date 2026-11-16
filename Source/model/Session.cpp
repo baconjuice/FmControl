@@ -1,5 +1,6 @@
 #include "Session.h"
 #include "MidiLearn.h"
+#include "fm/Randomizer.h"
 
 #include <cstring>
 
@@ -83,6 +84,21 @@ void Session::setParam (const ParamDef& p, int raw, uint8_t)
     fireChanged (changed);
 }
 
+void Session::setVoiceParam (int voice, const ParamDef& p, int raw)
+{
+    voice &= 3;
+    if (voice == editVoice)
+    {
+        setParam (p, raw);
+        return;
+    }
+    auto& patch = voices[(size_t) voice];
+    const auto changed = patch.setRaw (p, raw);
+    if (live)
+        for (auto addr : changed)
+            device.queueParameter (voice, addr, patch.byte (addr));
+}
+
 void Session::setName (const juce::String& name)
 {
     const auto before = edit();
@@ -106,6 +122,43 @@ void Session::loadIntoEditor (const Patch& p, int fromSlot)
     fireReplaced();
     if (live)
         sendEditBuffer();
+}
+
+void Session::randomize (const std::string& section, float amount)
+{
+    auto& history = randomHistory[(size_t) editVoice];
+    history.push_back (edit());
+    if (history.size() > 100)
+        history.erase (history.begin());
+    fm::randomize (editRef(), section, amount, rng);
+    sourceSlot[(size_t) editVoice] = -1;
+    fireReplaced();
+    sendEditBufferSoon();
+}
+
+void Session::undoRandom()
+{
+    auto& history = randomHistory[(size_t) editVoice];
+    if (history.empty())
+        return;
+    editRef() = history.back();
+    history.pop_back();
+    fireReplaced();
+    sendEditBufferSoon();
+    setStatus ("Undid random change");
+}
+
+void Session::sendEditBufferSoon()
+{
+    if (! live)
+        return;
+    const int gen = ++sendGeneration;
+    juce::WeakReference<Session> self (this);
+    juce::Timer::callAfterDelay (150, [self, gen]
+                                 {
+                                     if (auto* s = self.get(); s != nullptr && s->sendGeneration == gen)
+                                         s->sendEditBuffer();
+                                 });
 }
 
 void Session::sendEditBuffer()

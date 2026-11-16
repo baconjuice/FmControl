@@ -64,7 +64,7 @@ void LibraryPanel::bankChanged()
 void LibraryPanel::paintListBoxItem (int row, juce::Graphics& g, int w, int h, bool selected)
 {
     if (selected)
-        g.fillAll (colours::accent.withAlpha (0.35f));
+        g.fillAll (colours::text);
     else if (row == session.editorSourceSlot())
         g.fillAll (colours::panelEdge.withAlpha (0.6f));
     else if (row % 2)
@@ -72,17 +72,17 @@ void LibraryPanel::paintListBoxItem (int row, juce::Graphics& g, int w, int h, b
 
     const auto& p = session.slot (row);
     g.setFont (font (12.5f));
-    g.setColour (colours::dimText);
+    g.setColour (selected ? colours::onAccent : colours::dimText);
     g.drawText (bankLetter (session.getBankNumber()) + juce::String (row + 1).paddedLeft ('0', 3), 6, 0, 40, h,
                 juce::Justification::centredLeft);
     if (p)
     {
-        g.setColour (colours::text);
+        g.setColour (selected ? colours::onAccent : colours::accent);
         g.drawText (juce::String (p->name()), 52, 0, w - 56, h, juce::Justification::centredLeft);
     }
     else
     {
-        g.setColour (colours::panelEdge);
+        g.setColour (selected ? colours::onAccent : colours::panelEdge);
         g.drawText ("(not loaded)", 52, 0, w - 56, h, juce::Justification::centredLeft);
     }
 }
@@ -230,7 +230,8 @@ void LibraryPanel::paint (juce::Graphics& g)
     g.setColour (colours::panel);
     g.fillRect (getLocalBounds());
     g.setColour (colours::panelEdge);
-    g.drawVerticalLine (getWidth() - 1, 0.0f, (float) getHeight());
+    g.fillRect (getWidth() - 1, 0, 1, getHeight());
+    g.fillRect (getWidth() - 3, 0, 1, getHeight());
 }
 
 void LibraryPanel::resized()

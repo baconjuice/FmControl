@@ -2,6 +2,7 @@
 
 #include "device/FmDevice.h"
 #include "model/Session.h"
+#include "plugin/Automation.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
@@ -38,6 +39,7 @@ public:
 
     FmDevice device;
     Session session { device };
+    Automation automation { *this, session }; // DAW automation slots
 
     int editorWidth = 1400, editorHeight = 860;
 

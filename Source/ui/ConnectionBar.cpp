@@ -149,14 +149,15 @@ void ConnectionBar::paint (juce::Graphics& g)
     g.setColour (colours::panel);
     g.fillRect (getLocalBounds());
     g.setColour (colours::panelEdge);
-    g.drawHorizontalLine (getHeight() - 1, 0.0f, (float) getWidth());
+    g.fillRect (0, getHeight() - 1, getWidth(), 1);
+    g.fillRect (0, getHeight() - 3, getWidth(), 1);
 
     const auto now = juce::Time::getMillisecondCounter();
     auto led = [&] (juce::Rectangle<int> r, juce::uint32 last, juce::Colour on)
     {
         const bool lit = now - last < 150;
         g.setColour (lit ? on : colours::panelEdge);
-        g.fillEllipse (r.toFloat());
+        g.fillRect (r.toFloat().reduced (1.0f));
     };
     led (inLed, lastIn, colours::good);
     led (outLed, lastOut, colours::accent2);

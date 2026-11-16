@@ -28,6 +28,7 @@ private:
     void refreshHeader();
     void savePatch();
     void showLog();
+    void showRandomPanel();
     void writeSnapshots (const juce::File& dir);
 
     FmControlProcessor& proc;
@@ -40,7 +41,8 @@ private:
     juce::Label nameLabel, voiceLabel, sourceLabel;
     juce::TextEditor nameEditor;
     juce::OwnedArray<juce::TextButton> voiceButtons;
-    juce::TextButton newButton { "Init Patch" }, openButton { "Open .syx" }, savePatchButton { "Save Patch .syx" };
+    juce::TextButton newButton { "Init Patch" }, openButton { "Open .syx" }, savePatchButton { "Save Patch .syx" },
+                   randomButton { "Random..." };
 
     std::unique_ptr<ui::VoiceEditor> voiceEditor;
 

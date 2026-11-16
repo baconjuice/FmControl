@@ -66,7 +66,7 @@ public:
     void paintOverChildren (juce::Graphics&) override;
 
 protected:
-    void targetReplaced() override { refresh(); }
+    void targetReplaced() override { refresh(); updateTooltip(); repaint(); } // e.g. another voice
     void targetChanged (const std::vector<uint16_t>& addresses) override;
     virtual void refresh() = 0;
 

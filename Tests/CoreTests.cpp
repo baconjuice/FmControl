@@ -2,6 +2,7 @@
 // official MIDIbox FM preset bank.
 
 #include "fm/Params.h"
+#include "fm/Randomizer.h"
 #include "fm/SyxFile.h"
 #include "fm/SysEx.h"
 
@@ -109,11 +110,53 @@ static void testPresets()
     CHECK (syx::write (entries) == bytes);
 }
 
+static void testRandomizer()
+{
+    std::mt19937 rng (1234);
+    const auto& t = voiceParams();
+    auto v = [&] (const Patch& p, const char* id) { return p.getRaw (t.get (id)); };
+
+    for (int i = 0; i < 300; ++i)
+    {
+        Patch p = Patch::makeInit();
+        randomize (p, "all", 1.0f, rng);
+        CHECK (p.name().rfind ("Random Patch", 0) == 0);
+        CHECK (v (p, "op1.mult") <= 7 && v (p, "op3.mult") <= 7);
+        CHECK (v (p, "op2.mult") == 0 && v (p, "op4.mult") == 0);
+        CHECK (v (p, "op1.volume") >= 48 && v (p, "op3.volume") >= 48);
+        CHECK (v (p, "op2.volume") == 63 && v (p, "op4.volume") == 63);
+        for (auto* s : { "op1.sustain", "op2.sustain", "op3.sustain", "op4.sustain" })
+            CHECK (v (p, s) >= 8);
+        CHECK (v (p, "lfo1.wave") <= 3 && v (p, "lfo2.wave") <= 3);
+        for (auto* d : { "lfo1.op2", "lfo1.op4", "lfo2.op2", "lfo2.op4", "eg5.op2", "eg5.op4" })
+            CHECK (v (p, d) == 64);
+        const int rate = v (p, "wt.rate");
+        CHECK (rate == 0 || rate >= 64);
+        for (auto b : p.data)
+            CHECK (b < 0x80);
+    }
+
+    // A section only touches its own parameters.
+    Patch base = Patch::makeInit();
+    Patch p = base;
+    randomize (p, "lfo", 1.0f, rng);
+    for (auto& d : t.all())
+        if (d.id.rfind ("lfo", 0) != 0)
+            CHECK (p.getRaw (d) == base.getRaw (d));
+
+    // A small amount stays close to the original.
+    p = base;
+    randomize (p, "eg5", 0.1f, rng);
+    for (auto* id : { "eg5.attack", "eg5.decay1", "eg5.release" })
+        CHECK (std::abs (v (p, id) - v (base, id)) <= 13);
+}
+
 int main()
 {
     testMessages();
     testParams();
     testPresets();
+    testRandomizer();
     std::printf (failures == 0 ? "All tests passed\n" : "%d failure(s)\n", failures);
     return failures == 0 ? 0 : 1;
 }

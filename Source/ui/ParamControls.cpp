@@ -23,7 +23,7 @@ ParamControl::ParamControl (ParamTarget& s, const fm::ParamDef& d) : session (s)
 
 int ParamControl::automationSlot() const
 {
-    return automation != nullptr ? automation->slotFor (session.learnScope(), def.id) : -1;
+    return automation != nullptr ? automation->slotFor (session.automationScope(), def.id) : -1;
 }
 
 ParamControl::~ParamControl()
@@ -56,20 +56,21 @@ void ParamControl::showLearnMenu()
         menu.addItem ("Forget " + MidiLearn::describe (*m), [ml, scope, id] { ml->forget (scope, id); });
     if (automation != nullptr)
     {
+        const int ascope = session.automationScope();
         auto* au = automation;
         const int current = automationSlot();
         const uint8_t wopt = writeOption ? writeOption() : (uint8_t) 0;
         juce::PopupMenu slotsMenu;
         for (int i = 0; i < au->numSlots(); ++i)
             slotsMenu.addItem (au->slotLabel (i), true, i == current,
-                               [au, i, scope, id, wopt] { au->assign (i, scope, id, wopt); });
+                               [au, i, ascope, id, wopt] { au->assign (i, ascope, id, wopt); });
         slotsMenu.addSeparator();
-        slotsMenu.addItem ("Reset All Slots to Defaults", [au, scope] { au->resetToDefaults (scope); });
+        slotsMenu.addItem ("Reset All Slots to Defaults", [au, ascope] { au->resetToDefaults (ascope); });
         menu.addSeparator();
         menu.addSubMenu (current >= 0 ? "DAW Automation: Slot " + juce::String (current + 1) : juce::String ("DAW Automation Slot"),
                          slotsMenu);
         if (current >= 0)
-            menu.addItem ("Remove from DAW Slot " + juce::String (current + 1), [au, scope, id] { au->unassign (scope, id); });
+            menu.addItem ("Remove from DAW Slot " + juce::String (current + 1), [au, ascope, id] { au->unassign (ascope, id); });
     }
     if (! ml->all().empty())
     {
@@ -119,7 +120,7 @@ void ParamControl::paintOverChildren (juce::Graphics& g)
     if (learn->isLearning (scope, def.id))
     {
         g.setColour (colours::accent2);
-        g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (1.0f), 4.0f, 2.0f);
+        g.drawRect (getLocalBounds().toFloat().reduced (1.0f), 2.0f);
     }
     else if (learn->find (scope, def.id) != nullptr)
     {
@@ -389,13 +390,9 @@ void ParamGroup::resized()
 
 void ParamGroup::paint (juce::Graphics& g)
 {
-    auto r = getLocalBounds().toFloat().reduced (0.5f);
-    g.setColour (colours::panel);
-    g.fillRoundedRectangle (r, 5.0f);
-    g.setColour (colours::panelEdge);
-    g.drawRoundedRectangle (r, 5.0f, 1.0f);
-    g.setColour (colours::accent2);
-    g.setFont (font (12.5f, true));
-    g.drawText (title, kPad, 3, getWidth() - 2 * kPad, kTitleH - 2, juce::Justification::centredLeft);
+    // A text-mode window; the shadow stays inside our bounds (3 px).
+    auto r = getLocalBounds().toFloat().withTrimmedRight (3.0f).withTrimmedBottom (3.0f);
+    drawWindow (g, r);
+    drawWindowTitle (g, r, title);
 }
 } // namespace ui

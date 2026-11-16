@@ -33,6 +33,7 @@ juce::AudioProcessorEditor* FmControlProcessor::createEditor()
 void FmControlProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     auto v = session.toValueTree();
+    v.appendChild (automation.toValueTree(), nullptr);
     v.setProperty ("editorWidth", editorWidth, nullptr);
     v.setProperty ("editorHeight", editorHeight, nullptr);
     if (auto xml = v.createXml())
@@ -51,12 +52,16 @@ void FmControlProcessor::setStateInformation (const void* data, int sizeInBytes)
     if (juce::MessageManager::getInstance()->isThisTheMessageThread())
     {
         session.fromValueTree (v);
+        automation.fromValueTree (v.getChildWithName ("Automation"));
         return;
     }
     juce::MessageManager::callAsync ([this, v, alive = std::weak_ptr<bool> (aliveFlag)]
     {
         if (! alive.expired())
+        {
             session.fromValueTree (v);
+            automation.fromValueTree (v.getChildWithName ("Automation"));
+        }
     });
 }
 

@@ -1,4 +1,5 @@
 #include "PluginEditor.h"
+#include "ui/RandomPanel.h"
 
 using namespace ui;
 
@@ -47,14 +48,18 @@ FmControlEditor::FmControlEditor (FmControlProcessor& p)
     newButton.onClick = [this] { session.loadIntoEditor (fm::Patch::makeInit()); };
     openButton.onClick = [this] { library.openSyx(); };
     savePatchButton.onClick = [this] { savePatch(); };
-    for (auto* b : { &newButton, &openButton, &savePatchButton })
+    randomButton.setTooltip ("Random generator: roll new operators, LFOs, EG5 or wavetable (like RND on the box)");
+    randomButton.setColour (juce::TextButton::buttonColourId, colours::accent2);
+    randomButton.setColour (juce::TextButton::textColourOffId, colours::onAccent);
+    randomButton.onClick = [this] { showRandomPanel(); };
+    for (auto* b : { &newButton, &openButton, &savePatchButton, &randomButton })
         addAndMakeVisible (b);
 
     voiceEditor = std::make_unique<VoiceEditor> (session);
     addAndMakeVisible (*voiceEditor);
 
     statusLabel.setFont (font (12.5f));
-    statusLabel.setColour (juce::Label::textColourId, colours::text);
+    statusLabel.setColour (juce::Label::textColourId, colours::onAccent);
     addAndMakeVisible (statusLabel);
     addChildComponent (progressBar);
     cancelButton.onClick = [this] { session.cancelTransfers(); };
@@ -109,8 +114,35 @@ void FmControlEditor::writeSnapshots (const juce::File& dir)
         out.truncate();
         juce::PNGImageFormat().writeImageToStream (img, out);
     }
+    {
+        // Random generator panel, and a fully random patch.
+        ui::RandomPanel panel (session);
+        panel.setLookAndFeel (&lnf);
+        auto img = panel.createComponentSnapshot (panel.getLocalBounds(), true, 1.0f);
+        juce::FileOutputStream out (dir.getChildFile ("RandomPanel.png"));
+        out.setPosition (0);
+        out.truncate();
+        juce::PNGImageFormat().writeImageToStream (img, out);
+        panel.setLookAndFeel (nullptr);
+    }
+    session.randomize ("all", 1.0f);
+    for (int i = 0; i < tabs.getNumTabs(); ++i)
+    {
+        tabs.setCurrentTabIndex (i);
+        auto img = createComponentSnapshot (getLocalBounds(), true, 1.0f);
+        juce::FileOutputStream out (dir.getChildFile ("Random_" + juce::String (i) + ".png"));
+        out.setPosition (0);
+        out.truncate();
+        juce::PNGImageFormat().writeImageToStream (img, out);
+    }
     if (auto* app = juce::JUCEApplicationBase::getInstance())
         app->systemRequestedQuit();
+}
+
+void FmControlEditor::showRandomPanel()
+{
+    auto panel = std::make_unique<ui::RandomPanel> (session);
+    juce::CallOutBox::launchAsynchronously (std::move (panel), randomButton.getBounds(), this);
 }
 
 void FmControlEditor::refreshHeader()
@@ -179,12 +211,17 @@ void FmControlEditor::showLog()
 
 void FmControlEditor::paint (juce::Graphics& g)
 {
+    // Text-mode desktop: a dithered ░ shade behind the windows.
     g.fillAll (colours::background);
+    g.setColour (colours::panelEdge.withAlpha (0.22f));
+    for (int y = 0; y < getHeight(); y += 2)
+        for (int x = (y / 2) % 2 * 2; x < getWidth(); x += 4)
+            g.fillRect (x, y, 1, 1);
+
+    // Status line: the classic cyan bar at the bottom of the screen.
     auto status = getLocalBounds().removeFromBottom (28);
-    g.setColour (colours::panel);
+    g.setColour (colours::text);
     g.fillRect (status);
-    g.setColour (colours::panelEdge);
-    g.drawHorizontalLine (status.getY(), 0.0f, (float) getWidth());
 }
 
 void FmControlEditor::resized()
@@ -218,6 +255,8 @@ void FmControlEditor::resized()
     openButton.setBounds (header.removeFromRight (84).reduced (0, 2));
     header.removeFromRight (6);
     newButton.setBounds (header.removeFromRight (90).reduced (0, 2));
+    header.removeFromRight (6);
+    randomButton.setBounds (header.removeFromRight (90).reduced (0, 2));
     main.removeFromTop (6);
     voiceEditor->setBounds (main);
 }

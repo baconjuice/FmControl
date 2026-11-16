@@ -257,6 +257,36 @@ int main (int argc, char** argv)
         return 0;
     }
 
+    if (cmd == "randomsend" && args.size() >= 3)
+    {
+        // Through the app's Session: read voice 4, roll "All", send it (waits
+        // for the ack), then send the original back.
+        auto in = findPort (ins, args[1]);
+        auto out = findPort (outs, args[2]);
+        FmDevice dev;
+        dev.openInput (in.identifier);
+        dev.openOutput (out.identifier);
+        Session session (dev);
+        auto waitStatus = [&] (const juce::String& prefix)
+        {
+            const auto end = juce::Time::getMillisecondCounter() + 8000;
+            while (! session.getStatus().startsWith (prefix) && ! session.getStatus().containsIgnoreCase ("fail")
+                   && juce::Time::getMillisecondCounter() < end)
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (50);
+            std::cout << "  " << session.getStatus() << "\n";
+            return session.getStatus().startsWith (prefix);
+        };
+        session.setEditVoice (3);
+        if (! waitStatus ("Voice 4")) { std::cout << "  could not read voice 4, not touching it\n"; return 1; }
+        const auto original = session.edit();
+        std::cout << "  voice 4 was \"" << original.name() << "\"\n";
+        session.randomize ("all", 1.0f);
+        const bool ok = waitStatus ("Sent patch");
+        session.loadIntoEditor (original);
+        const bool back = waitStatus ("Sent patch");
+        return ok && back ? 0 : 1;
+    }
+
     if (cmd == "parburst" && args.size() >= 3)
     {
         // Rewrite every parameter of voice 1 with its current value as live

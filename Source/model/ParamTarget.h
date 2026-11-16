@@ -43,6 +43,8 @@ public:
     virtual MidiLearn* getMidiLearn() { return nullptr; }
     virtual int learnScope() const { return -1; }
     virtual AutomationLink* getAutomation() { return nullptr; } // DAW slots (plugin only)
+    // Scope of DAW automation slots (the FM: the voice being edited).
+    virtual int automationScope() const { return learnScope(); }
 
     void addTargetListener (Listener* l) { targetListeners.add (l); }
     void removeTargetListener (Listener* l) { targetListeners.remove (l); }
