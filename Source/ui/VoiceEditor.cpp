@@ -48,11 +48,11 @@ void drawScope (juce::Graphics& g, juce::Rectangle<float> r)
     g.fillRect (r);
     g.setColour (colours::panelEdge.withAlpha (0.55f));
     g.drawRect (r, 1.0f);
-    g.setColour (colours::panelEdge.withAlpha (0.4f));
-    const int step = 8;
-    for (float y = r.getY() + (float) step; y < r.getBottom() - 1.0f; y += (float) step)
-        for (float x = r.getX() + (float) step; x < r.getRight() - 1.0f; x += 2.0f * step / 4.0f)
-            g.fillRect (std::round (x), std::round (y), 1.0f, 1.0f);
+    // Dots every 4 px along rows that are 8 px apart.
+    const auto inner = r.toNearestInt();
+    const juce::Point<int> first (inner.getX() + 8, inner.getY() + 8);
+    const auto area = juce::Rectangle<int>::leftTopRightBottom (first.x, first.y, inner.getRight() - 1, inner.getBottom() - 1);
+    fillDots (g, area, first, colours::panelEdge.withAlpha (0.4f), 4, 8, { { 0, 0 } });
 }
 
 class Listening : public juce::Component,

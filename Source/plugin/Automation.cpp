@@ -156,6 +156,18 @@ void Automation::assignmentsChanged()
     notify();
 }
 
+void Automation::beginGesture (int voice, const std::string& paramId)
+{
+    if (const int slot = slotFor (voice, paramId); slot >= 0 && params[(size_t) slot] != nullptr)
+        params[(size_t) slot]->beginChangeGesture();
+}
+
+void Automation::endGesture (int voice, const std::string& paramId)
+{
+    if (const int slot = slotFor (voice, paramId); slot >= 0 && params[(size_t) slot] != nullptr)
+        params[(size_t) slot]->endChangeGesture();
+}
+
 void Automation::pushToHost (int slot)
 {
     auto* p = params[(size_t) slot];

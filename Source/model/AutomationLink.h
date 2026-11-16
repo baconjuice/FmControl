@@ -19,6 +19,10 @@ public:
     virtual void assign (int slot, int scope, const std::string& paramId, uint8_t writeOption) = 0;
     virtual void unassign (int scope, const std::string& paramId) = 0;
     virtual void resetToDefaults (int scope) = 0;
+    // A knob drag on an assigned control: the host sees one gesture (one undo
+    // step, clean automation recording) instead of a stream of separate edits.
+    virtual void beginGesture (int scope, const std::string& paramId) = 0;
+    virtual void endGesture (int scope, const std::string& paramId) = 0;
 
     struct Listener
     {

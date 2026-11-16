@@ -7,6 +7,7 @@ FmControlEditor::FmControlEditor (FmControlProcessor& p)
     : AudioProcessorEditor (p), proc (p), session (p.session), connectionBar (p.session), library (p.session)
 {
     setLookAndFeel (&lnf);
+    setOpaque (true); // paint() fills every pixel, so the host need not draw behind it
     juce::LookAndFeel::setDefaultLookAndFeel (&lnf);
 
     addAndMakeVisible (connectionBar);
@@ -109,6 +110,14 @@ void FmControlEditor::writeSnapshots (const juce::File& dir)
     {
         tabs.setCurrentTabIndex (i);
         auto img = createComponentSnapshot (getLocalBounds(), true, 1.0f);
+        {
+            // Paint timing at Retina scale, for spotting slow drawing code.
+            const auto t0 = juce::Time::getMillisecondCounterHiRes();
+            for (int k = 0; k < 10; ++k)
+                createComponentSnapshot (getLocalBounds(), true, 2.0f);
+            juce::Logger::outputDebugString ("paint " + tabs.getTabNames()[i] + ": "
+                                             + juce::String ((juce::Time::getMillisecondCounterHiRes() - t0) / 10.0, 2) + " ms");
+        }
         juce::FileOutputStream out (dir.getChildFile (juce::String (i) + "_" + tabs.getTabNames()[i].removeCharacters (" &") + ".png"));
         out.setPosition (0);
         out.truncate();
@@ -213,10 +222,7 @@ void FmControlEditor::paint (juce::Graphics& g)
 {
     // Text-mode desktop: a dithered ░ shade behind the windows.
     g.fillAll (colours::background);
-    g.setColour (colours::panelEdge.withAlpha (0.22f));
-    for (int y = 0; y < getHeight(); y += 2)
-        for (int x = (y / 2) % 2 * 2; x < getWidth(); x += 4)
-            g.fillRect (x, y, 1, 1);
+    fillDots (g, getLocalBounds(), {}, colours::panelEdge.withAlpha (0.22f), 4, 4, { { 0, 0 }, { 2, 2 } });
 
     // Status line: the classic cyan bar at the bottom of the screen.
     auto status = getLocalBounds().removeFromBottom (28);

@@ -1,6 +1,8 @@
 #include "LookAndFeel.h"
 #include "PixelFont.h"
 
+#include <map>
+
 namespace ui
 {
 juce::Font font (float height, bool bold)
@@ -11,6 +13,32 @@ juce::Font font (float height, bool bold)
                            .withName ("Menlo")
                            .withStyle (bold ? "Bold" : "Regular")
                            .withHeight (height * 0.92f));
+}
+
+void fillDots (juce::Graphics& g, juce::Rectangle<int> area, juce::Point<int> origin, juce::Colour colour,
+               int periodW, int periodH, std::initializer_list<juce::Point<int>> dots)
+{
+    area = area.getIntersection (g.getClipBounds());
+    if (area.isEmpty())
+        return;
+
+    // Tiles are only made on the message thread, so a plain map is enough.
+    static std::map<juce::String, juce::Image> tiles;
+    juce::String key;
+    key << (juce::int64) colour.getARGB() << ":" << periodW << "x" << periodH;
+    for (auto d : dots) key << ":" << d.x << "," << d.y;
+    auto& tile = tiles[key];
+    if (! tile.isValid())
+    {
+        tile = juce::Image (juce::Image::ARGB, periodW, periodH, true);
+        for (auto d : dots)
+            tile.setPixelAt (d.x, d.y, colour);
+    }
+
+    const juce::Graphics::ScopedSaveState save (g);
+    g.setImageResamplingQuality (juce::Graphics::lowResamplingQuality); // keep the dots hard-edged
+    g.setFillType (juce::FillType (tile, juce::AffineTransform::translation ((float) origin.x, (float) origin.y)));
+    g.fillRect (area);
 }
 
 void drawWindow (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour fill, juce::Colour edge, float shadow)
@@ -213,10 +241,7 @@ void LookAndFeel::drawScrollbar (juce::Graphics& g, juce::ScrollBar&, int x, int
     // Dithered track (the text-mode ░ shade) with a solid thumb.
     g.setColour (colours::background);
     g.fillRect (x, y, w, h);
-    g.setColour (colours::panelEdge.withAlpha (0.45f));
-    for (int yy = y; yy < y + h; yy += 2)
-        for (int xx = x + ((yy / 2) % 2); xx < x + w; xx += 2)
-            g.fillRect (xx, yy, 1, 1);
+    fillDots (g, { x, y, w, h }, { x, y }, colours::panelEdge.withAlpha (0.45f), 2, 4, { { 0, 0 }, { 1, 2 } });
     auto thumb = vertical ? juce::Rectangle<int> (x + 1, thumbPos, w - 2, thumbSize)
                           : juce::Rectangle<int> (thumbPos, y + 1, thumbSize, h - 2);
     g.setColour (down ? colours::accent : (over ? colours::text : colours::dimText));

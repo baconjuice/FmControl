@@ -32,6 +32,13 @@ void drawWindow (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour fill 
 void drawWindowTitle (juce::Graphics& g, juce::Rectangle<float> window, const juce::String& title,
                       juce::Colour colour = colours::accent2);
 
+// Fills area with a repeating dot pattern: one period of periodW x periodH
+// pixels, with dots at the given offsets, anchored at origin. The period is
+// cached as a small tile and drawn as a tiled fill, so a large area costs
+// one fill instead of thousands of 1-pixel rectangles.
+void fillDots (juce::Graphics& g, juce::Rectangle<int> area, juce::Point<int> origin, juce::Colour colour,
+               int periodW, int periodH, std::initializer_list<juce::Point<int>> dots);
+
 class LookAndFeel : public juce::LookAndFeel_V4
 {
 public:
