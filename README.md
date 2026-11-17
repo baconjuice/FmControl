@@ -77,11 +77,12 @@ the slot drives that parameter of the voice you were editing (shown as "V2 OP1 V
 automation keeps working when you switch voices in the editor.
 Slots 17-24 are for the drum set (shown as "DR BD Pitch" and so on); the defaults are bass drum pitch and
 pitch drop, bass drum, snare, closed hi-hat and cymbal decay, and hi-hat and tom pitch. Drum controls can
-only go on drum slots and voice controls on voice slots.
+only go on drum slots and voice controls on voice slots. The ensemble has no slots: the box takes a voice's volume, transpose and unisono as
+CC 7, 2 and 3 on its channel, so a clip can automate those directly.
 
 MIDI learn: right-click any knob, button or menu and choose **MIDI Learn**, then move a controller. A mapped
-controller always edits the voice you are editing; controllers learned on the drum set page always edit the
-drum set, whichever part is shown. Each controller belongs to one parameter, so learning it again moves it.
+controller always edits the voice you are editing; controllers learned on the drum set or ensemble page always
+edit the drum set or the ensemble, whichever part is shown. Each controller belongs to one parameter, so learning it again moves it.
 Mapped CCs change the editor and are not passed through to the FM; unmapped CCs pass through as before.
 
 The look is a nod to early-'90s DOS music trackers on OPL3 sound cards: VGA colours, text-mode windows and

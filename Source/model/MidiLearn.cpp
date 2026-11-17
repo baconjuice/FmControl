@@ -6,11 +6,16 @@
 
 namespace
 {
-const char* scopeName (int scope) { return scope == MidiLearn::kDrumScope ? "Drum Set" : "Voice"; }
+const char* scopeName (int scope)
+{
+    return scope == MidiLearn::kDrumScope ? "Drum Set" : scope == MidiLearn::kEnsembleScope ? "Ensemble" : "Voice";
+}
 
 const fm::ParamTable& tableFor (int scope)
 {
-    return scope == MidiLearn::kDrumScope ? fm::drumParams() : fm::voiceParams();
+    return scope == MidiLearn::kDrumScope       ? fm::drumParams()
+           : scope == MidiLearn::kEnsembleScope ? fm::ensembleParams()
+                                                : fm::voiceParams();
 }
 } // namespace
 
@@ -137,7 +142,9 @@ void MidiLearn::apply (const Mapping& m, int value)
     if (d == nullptr)
         return;
 
-    ParamTarget* target = m.scope == kDrumScope ? static_cast<ParamTarget*> (&session.getDrumTarget()) : &session;
+    ParamTarget* target = m.scope == kDrumScope       ? static_cast<ParamTarget*> (&session.getDrumTarget())
+                          : m.scope == kEnsembleScope ? static_cast<ParamTarget*> (&session.getEnsembleTarget())
+                                                      : &session;
 
     const int raw = scaledRaw (*d, value);
     if (raw != target->getParam (*d))
@@ -180,7 +187,8 @@ void MidiLearn::fromValueTree (const juce::ValueTree& v)
         Mapping m;
         m.channel = juce::jlimit (1, 16, (int) c.getProperty ("channel", 1));
         m.cc = juce::jlimit (0, 119, (int) c.getProperty ("cc", 0));
-        m.scope = (int) c.getProperty ("scope", kVoiceScope) == kDrumScope ? kDrumScope : kVoiceScope;
+        const int scope = c.getProperty ("scope", kVoiceScope);
+        m.scope = scope == kDrumScope || scope == kEnsembleScope ? scope : kVoiceScope;
         m.paramId = c.getProperty ("param").toString().toStdString();
         m.writeOption = (uint8_t) (int) c.getProperty ("wopt", 0);
         if (tableFor (m.scope).find (m.paramId) != nullptr)

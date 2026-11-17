@@ -119,6 +119,8 @@ uint8_t EnsembleTarget::getByte (int addr) const { return session.getEnsemble().
 int EnsembleTarget::getParam (const ParamDef& p) const { return session.getEnsemble().getRaw (p); }
 void EnsembleTarget::setParam (const ParamDef& p, int raw, uint8_t) { session.setEnsembleParam (p, raw); }
 int EnsembleTarget::defaultRaw (const ParamDef& p) const { return makeInitEnsemble().getRaw (p); }
+MidiLearn* EnsembleTarget::getMidiLearn() { return session.getMidiLearn(); }
+int EnsembleTarget::learnScope() const { return MidiLearn::kEnsembleScope; }
 
 Session::Session (FmDevice& d) : device (d)
 {

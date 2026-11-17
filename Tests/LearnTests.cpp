@@ -112,6 +112,33 @@ int main()
         CHECK (ml.find (scope, "sd.decay") == nullptr);
     }
 
+    // Ensemble parameters: own scope, act on the ensemble; no DAW slots.
+    {
+        const auto& E = fm::ensembleParams();
+        const int ens = MidiLearn::kEnsembleScope;
+        auto& et = session.getEnsembleTarget();
+        CHECK (et.getMidiLearn() == &ml && et.learnScope() == ens && et.getAutomation() == nullptr);
+        ml.startLearning (ens, "v2.volume", 0);
+        sendCC (device, 1, 30, 40);
+        CHECK (ml.find (ens, "v2.volume") != nullptr);
+        CHECK (session.getEnsemble().getRaw (E.get ("v2.volume")) == 40);
+        ml.startLearning (ens, "v4.transpose", 0);
+        sendCC (device, 1, 31, 0);
+        CHECK (session.getEnsemble().getRaw (E.get ("v4.transpose")) == 0); // -64
+        ml.startLearning (ens, "v1.velocity", 0);
+        sendCC (device, 1, 32, 127);
+        CHECK (session.getEnsemble().getRaw (E.get ("v1.velocity")) == 2); // Soft, never the unused 3
+        ml.startLearning (ens, "v3.channel", 0);
+        sendCC (device, 1, 33, 127);
+        CHECK (session.voiceChannel (2) == 16);
+
+        auto st = session.toValueTree();
+        ml.clearAll();
+        session.fromValueTree (st);
+        CHECK (ml.find (ens, "v2.volume") != nullptr && ml.find (ens, "v3.channel") != nullptr);
+        CHECK (ml.find (MidiLearn::kDrumScope, "sd.decay") != nullptr);
+    }
+
     std::printf (failures == 0 ? "learn tests passed\n" : "%d failures\n", failures);
     return failures == 0 ? 0 : 1;
 }

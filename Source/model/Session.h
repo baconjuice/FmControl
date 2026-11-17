@@ -44,7 +44,7 @@ private:
     Session& session;
 };
 
-// The ensemble as a ParamTarget, for the ensemble editor.
+// The ensemble as a ParamTarget, for the ensemble editor (MIDI learn, no DAW slots).
 class EnsembleTarget : public ParamTarget
 {
 public:
@@ -53,6 +53,8 @@ public:
     int getParam (const fm::ParamDef& p) const override;
     void setParam (const fm::ParamDef& p, int raw, uint8_t writeOption = 0) override;
     int defaultRaw (const fm::ParamDef& p) const override;
+    MidiLearn* getMidiLearn() override;
+    int learnScope() const override;
     void replaced() { notifyReplaced(); }
     void changed (const std::vector<uint16_t>& a) { notifyChanged (a); }
 
