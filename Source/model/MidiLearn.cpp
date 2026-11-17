@@ -6,9 +6,12 @@
 
 namespace
 {
-const char* scopeName (int) { return "Voice"; }
+const char* scopeName (int scope) { return scope == MidiLearn::kDrumScope ? "Drum Set" : "Voice"; }
 
-const fm::ParamTable& tableFor (int) { return fm::voiceParams(); }
+const fm::ParamTable& tableFor (int scope)
+{
+    return scope == MidiLearn::kDrumScope ? fm::drumParams() : fm::voiceParams();
+}
 } // namespace
 
 MidiLearn::MidiLearn (Session& s) : session (s)
@@ -104,12 +107,12 @@ void MidiLearn::fmController (int channel, int cc, int value)
         learnTarget.reset();
         session.device.setLearning (false);
 
-        // One controller per scope, one controller per parameter.
+        // One parameter per controller (voice or drum set), one controller per parameter.
         mappings.erase (std::remove_if (mappings.begin(), mappings.end(),
                                         [&] (const Mapping& o)
                                         {
-                                            return o.scope == m.scope
-                                                   && (o.paramId == m.paramId || (o.channel == channel && o.cc == cc));
+                                            return (o.scope == m.scope && o.paramId == m.paramId)
+                                                   || (o.channel == channel && o.cc == cc);
                                         }),
                         mappings.end());
         mappings.push_back (m);
@@ -134,7 +137,7 @@ void MidiLearn::apply (const Mapping& m, int value)
     if (d == nullptr)
         return;
 
-    ParamTarget* target = &session;
+    ParamTarget* target = m.scope == kDrumScope ? static_cast<ParamTarget*> (&session.getDrumTarget()) : &session;
 
     const int raw = scaledRaw (*d, value);
     if (raw != target->getParam (*d))
@@ -177,7 +180,7 @@ void MidiLearn::fromValueTree (const juce::ValueTree& v)
         Mapping m;
         m.channel = juce::jlimit (1, 16, (int) c.getProperty ("channel", 1));
         m.cc = juce::jlimit (0, 119, (int) c.getProperty ("cc", 0));
-        m.scope = kVoiceScope;
+        m.scope = (int) c.getProperty ("scope", kVoiceScope) == kDrumScope ? kDrumScope : kVoiceScope;
         m.paramId = c.getProperty ("param").toString().toStdString();
         m.writeOption = (uint8_t) (int) c.getProperty ("wopt", 0);
         if (tableFor (m.scope).find (m.paramId) != nullptr)

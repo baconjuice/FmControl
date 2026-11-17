@@ -1,8 +1,9 @@
 #pragma once
 
-// MIDI learn: controllers (CC) from the keyboard / DAW track mapped to patch
-// or ensemble parameters. A controller maps to one parameter; the edited voice
-// follows the voice selector. Mapped controllers are not passed through to the FM.
+// MIDI learn: controllers (CC) from the keyboard / DAW track mapped to voice
+// patch or drum set parameters. A controller maps to one parameter; voice
+// mappings act on the edited voice (it follows the voice selector), drum
+// mappings on the drum set. Mapped controllers are not passed through to the FM.
 
 #include "device/FmDevice.h"
 #include "fm/Params.h"
@@ -18,7 +19,8 @@ class ParamTarget;
 class MidiLearn : private FmDevice::Listener
 {
 public:
-    static constexpr int kVoiceScope = 0; // only voice patches for now
+    static constexpr int kVoiceScope = 0;
+    static constexpr int kDrumScope = 1;
 
     struct Mapping
     {

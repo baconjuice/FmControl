@@ -24,7 +24,7 @@ class MidiLearn;
 class Session;
 
 // The drum set as a ParamTarget, so the drum editor's controls bind to it.
-// No MIDI learn or DAW slots for drums (yet).
+// Its controls can be MIDI learned (no DAW slots for drums).
 class DrumTarget : public ParamTarget
 {
 public:
@@ -33,6 +33,8 @@ public:
     int getParam (const fm::ParamDef& p) const override;
     void setParam (const fm::ParamDef& p, int raw, uint8_t writeOption = 0) override;
     int defaultRaw (const fm::ParamDef& p) const override;
+    MidiLearn* getMidiLearn() override;
+    int learnScope() const override;
     void replaced() { notifyReplaced(); }
     void changed (const std::vector<uint16_t>& a) { notifyChanged (a); }
 

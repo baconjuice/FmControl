@@ -77,6 +77,41 @@ int main()
     ml.stopLearning();
     CHECK (! device.isLearning());
 
+    // Drum set parameters: own scope, act on the drum set whatever is edited.
+    {
+        const auto& D = fm::drumParams();
+        const int drums = MidiLearn::kDrumScope;
+        CHECK (session.getDrumTarget().getMidiLearn() == &ml && session.getDrumTarget().learnScope() == drums);
+        ml.startLearning (drums, "bd.freq", 0);
+        sendCC (device, 10, 20, 127);
+        CHECK (ml.find (drums, "bd.freq") != nullptr && ml.find (scope, "bd.freq") == nullptr);
+        CHECK (session.drums().getRaw (D.get ("bd.freq")) == 127);
+        sendCC (device, 10, 20, 32);
+        CHECK (session.drums().getRaw (D.get ("bd.freq")) == 32);
+
+        // A 4-bit drum value and a toggle get the whole controller range.
+        ml.startLearning (drums, "sd.decay", 0);
+        sendCC (device, 10, 21, 127);
+        CHECK (session.drums().getRaw (D.get ("sd.decay")) == 15);
+        ml.startLearning (drums, "tomcym.out3", 0);
+        sendCC (device, 10, 22, 100);
+        CHECK (session.drums().getRaw (D.get ("tomcym.out3")) == 1);
+
+        // A controller belongs to one parameter: learning it for a voice
+        // parameter takes it away from the drum set, and the other way round.
+        ml.startLearning (scope, "op2.volume", 0);
+        sendCC (device, 10, 20, 0);
+        CHECK (ml.find (drums, "bd.freq") == nullptr && ml.find (scope, "op2.volume") != nullptr);
+        CHECK (session.drums().getRaw (D.get ("bd.freq")) == 32);
+
+        // Drum mappings survive the state round trip with their scope.
+        auto st = session.toValueTree();
+        ml.clearAll();
+        session.fromValueTree (st);
+        CHECK (ml.find (drums, "sd.decay") != nullptr && ml.find (drums, "tomcym.out3") != nullptr);
+        CHECK (ml.find (scope, "sd.decay") == nullptr);
+    }
+
     std::printf (failures == 0 ? "learn tests passed\n" : "%d failures\n", failures);
     return failures == 0 ? 0 : 1;
 }
