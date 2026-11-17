@@ -127,6 +127,55 @@ int main()
         session.setEditVoice (0);
     }
 
+    // Ensemble mode: own edit buffer and 32-slot bank; voices follow its channels.
+    {
+        const auto& E = fm::ensembleParams();
+        const auto voiceBefore = session.edit();
+        CHECK (session.voiceChannel (2) == 3);
+        session.setEnsembleMode (true);
+        CHECK (session.isEnsembleMode() && ! session.isDrumMode() && session.slotCount() == fm::kEnsemblesPerBank);
+        CHECK (session.currentSlotName (31) == "A32");
+        session.getEnsembleTarget().setParam (E.get ("v3.channel"), 9);
+        CHECK (session.voiceChannel (2) == 10);
+        session.getEnsembleTarget().setParam (E.get ("v2.patch"), 41);
+        CHECK (fm::ensemblePatch (session.getEnsemble(), 1) == 41);
+        CHECK (session.edit() == voiceBefore);
+        CHECK (! session.canUndoRandom());
+        session.randomize ("all", 1.0f); // no random ensembles
+        CHECK (! session.canUndoRandom() && fm::ensemblePatch (session.getEnsemble(), 1) == 41);
+        session.setBankNumber (2);
+        session.setSlot (7, session.current());
+        CHECK (session.slot (7).has_value() && session.editorSourceSlot() == -1);
+        CHECK (session.storedPatchLabel (0, 4) == "A005");
+
+        // State round trip keeps the ensemble, its bank and the mode.
+        const auto sessionState = session.toValueTree();
+        session.setEditVoice (0);
+        CHECK (! session.isEnsembleMode() && session.getBankNumber() == 0);
+        CHECK (session.voiceChannel (2) == 10); // still the ensemble's channel
+        session.loadIntoEditor (fm::Patch::makeInit());
+        session.setEnsembleMode (true);
+        session.loadIntoEditor (fm::makeInitEnsemble());
+        CHECK (session.voiceChannel (2) == 3);
+        session.fromValueTree (sessionState);
+        CHECK (session.isEnsembleMode() && session.getBankNumber() == 2 && session.slot (7).has_value());
+        CHECK (session.voiceChannel (2) == 10);
+
+        // An ensemble file switches to ensemble mode and fills the list.
+        juce::String msg;
+        session.setDrumMode (true);
+        CHECK (session.loadSyx (juce::File (FIXTURES_DIR "/midibox_fm_ensembles.syx"), msg));
+        CHECK (session.isEnsembleMode());
+        int loaded = 0;
+        for (int i = 0; i < session.slotCount(); ++i)
+            loaded += session.slot (i).has_value() ? 1 : 0;
+        CHECK (loaded == 32);
+        // A drum-set file switches on to drum mode.
+        CHECK (session.loadSyx (juce::File (FIXTURES_DIR "/midibox_fm_drumsets.syx"), msg) && session.isDrumMode());
+        session.setEditVoice (0);
+        CHECK (! session.isEnsembleMode() && ! session.isDrumMode());
+    }
+
     std::printf (failures == 0 ? "All automation tests passed\n" : "%d failure(s)\n", failures);
     return failures == 0 ? 0 : 1;
 }

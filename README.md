@@ -39,7 +39,7 @@ Output is in `build/FmControl_artefacts/Release/`, in the `Standalone/`, `AU/` a
 5. Librarian (left): banks A-H with 128 patches each, fetch/store/bank transfers, `.syx` files (the official
    preset banks open directly), right-click for copy, paste, init and clear.
 6. **Keys**: MIDI from your keyboard or the DAW track goes to the box, by default on the edited voice's channel
-   (channels 1-4 for voices 1-4 in the default ensemble).
+   (each voice's MIDI channel comes from the ensemble; channels 1-4 by default).
 
 Drum sets: press **DR** next to the voice buttons. The editor then shows the drum set (the OPL3 rhythm
 section: bass drum modulator and carrier, open and closed hi-hat, snare, tom, cymbal) with each instrument's
@@ -52,6 +52,17 @@ box. **Init Kit** is the first preset drum set; the firmware's 16 preset sets
 (`presets/bank1/midibox_fm_drumsets.syx` in the firmware package) open with **Open .syx**. The drum random
 generator is FmControl's own (the box has none): it keeps attacks fast, releases moderate, the instruments
 audible and the bass drum's multipliers low, and never changes key ranges or outputs.
+
+Ensembles: press **EN**. The editor shows, for each of the four voices, the stored patch it plays (bank and
+number, with its name when the library knows it), its MIDI channel, key range, velocity mode, volume,
+transpose, unisono and the audio outputs of operators 1+2 and 3+4. The librarian switches to the bank's 32
+ensembles. Changing a voice's Bank or Patch loads that patch into the voice at once; the other settings are
+sent as you turn them, and the voices, the keyboard and **Play** (which plays every voice) use the
+ensemble's channels. On the box, loading an ensemble (**Send**, **Store** or **Fetch**) makes all four voices
+reload their stored patches and the drum set its stored set, so unsaved edits of those are lost; FmControl
+reads them back afterwards. Reading a stored ensemble also switches the box to it, so **Fetch Bank** asks first
+and puts the ensemble that was playing back at the end. Ensembles have no names. **Init Ens.** is the
+firmware's preset ensemble (`presets/bank1/midibox_fm_ensembles.syx`).
 
 Random generator: **Random...** in the patch header works like the RND menu on the box, for the voice being
 edited. Click a section (All, OP, LFO, EG5, WT Config, WT Steps) to roll it. It follows the firmware's rules
@@ -87,7 +98,9 @@ control for them.
   [midibox/mios8](https://github.com/midibox/mios8).
 - `Source/fm/CcNames.cpp` (parameter names) is generated from `midibox_fm_cc_voice.txt`.
 - `Source/fm/InitPatch.cpp` and `Tests/fixtures/midibox_fm_voices.syx` come from the firmware's preset bank,
-  the init kit in `Source/fm/Drums.cpp` and `Tests/fixtures/midibox_fm_drumsets.syx` from its preset drum sets.
+  the init kit in `Source/fm/Drums.cpp` and `Tests/fixtures/midibox_fm_drumsets.syx` from its preset drum sets,
+  the init ensemble in `Source/fm/Ensemble.cpp` and `Tests/fixtures/midibox_fm_ensembles.syx` from its preset
+  ensembles.
 
 Those files are Copyright 1998–2007 Thorsten Klose (tk@midibox.org) and are "licensed for personal
 non-commercial use only". FmControl is a free, non-commercial hobby project. Please don't use any of it commercially.

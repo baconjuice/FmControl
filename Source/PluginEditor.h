@@ -3,6 +3,7 @@
 #include "PluginProcessor.h"
 #include "ui/ConnectionBar.h"
 #include "ui/DrumEditor.h"
+#include "ui/EnsembleEditor.h"
 #include "ui/LibraryPanel.h"
 #include "ui/LookAndFeel.h"
 #include "ui/VoiceEditor.h"
@@ -47,6 +48,7 @@ private:
 
     std::unique_ptr<ui::VoiceEditor> voiceEditor;
     std::unique_ptr<ui::DrumEditor> drumEditor;
+    std::unique_ptr<ui::EnsembleEditor> ensembleEditor;
 
     juce::Label statusLabel;
     double progressValue = -1.0;

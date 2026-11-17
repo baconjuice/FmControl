@@ -12,6 +12,7 @@
 // All callbacks and listener calls happen on the message thread.
 
 #include "fm/Drums.h"
+#include "fm/Ensemble.h"
 #include "fm/SysEx.h"
 #include "device/PacedSysEx.h"
 
@@ -66,8 +67,9 @@ public:
     void setKeyboardChannel (int ch) { keyboardChannel = juce::jlimit (0, 16, ch); }
     int getKeyboardChannel() const { return keyboardChannel.load(); }
 
-    // Live edit of one byte of a voice's patch, or of the drum set with
-    // voice = fm::kDrumPart (coalesced and rate limited).
+    // Live edit of one byte of a voice's patch, of the drum set with
+    // voice = fm::kDrumPart, or of the ensemble with fm::kEnsemblePart
+    // (coalesced and rate limited).
     void queueParameter (int voice, uint16_t addr, uint8_t value);
     void clearPendingParameters() { pendingParams.clear(); }
 

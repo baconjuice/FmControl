@@ -22,7 +22,9 @@ namespace type
 
 uint8_t checksum (const uint8_t* data, size_t count); // 2s complement, 7 bit
 
-Bytes requestStored (uint8_t device, uint8_t bank, uint8_t patch);
+// Reading a stored patch also loads it into a voice on the box (voice 1
+// unless given) and makes the ensemble point that voice at it.
+Bytes requestStored (uint8_t device, uint8_t bank, uint8_t patch, int intoVoice = 0);
 Bytes requestVoice (uint8_t device, int voice);  // voice 0..3
 Bytes writeStored (uint8_t device, uint8_t bank, uint8_t patch, const Patch& p);
 Bytes writeVoice (uint8_t device, int voice, const Patch& p);
@@ -35,6 +37,14 @@ Bytes requestDrumsRam (uint8_t device);
 Bytes writeDrums (uint8_t device, uint8_t bank, uint8_t set, const Patch& p);
 Bytes writeDrumsRam (uint8_t device, const Patch& p);
 Bytes drumParameterWrite (uint8_t device, uint8_t addr, uint8_t value);
+
+// Ensembles (see Ensemble.h). "Ram" = the ensemble playing now. Reading a
+// stored ensemble also switches the box to it.
+Bytes requestEnsemble (uint8_t device, uint8_t bank, uint8_t ensemble);
+Bytes requestEnsembleRam (uint8_t device);
+Bytes writeEnsemble (uint8_t device, uint8_t bank, uint8_t ensemble, const Patch& p);
+Bytes writeEnsembleRam (uint8_t device, const Patch& p);
+Bytes ensembleParameterWrite (uint8_t device, uint8_t addr, uint8_t value);
 Bytes ping (uint8_t device);
 
 struct Message
@@ -54,6 +64,9 @@ struct Message
     bool isVoiceRam() const { return (type & 0xfc) == type::VoiceRam; }
     bool isDrums() const { return (type & 0xf7) == type::Drum; }
     bool isDrumsRam() const { return type == type::DrumRam; }
+    bool isEnsemble() const { return (type & 0xf7) == type::Ensemble; }
+    bool isEnsembleRam() const { return type == type::EnsembleRam; }
+    bool isVoice() const { return (type & 0xf4) == 0x00; }
     int voice() const { return type & 0x03; }
 };
 

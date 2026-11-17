@@ -164,6 +164,14 @@ public:
     void toggles (std::initializer_list<std::pair<std::string, juce::String>> idsAndLabels); // vertical stack
     void lineBreak();
     void gap (int width);
+    // Any other component (a label, a read-out) at the given size.
+    template <class C>
+    C& custom (std::unique_ptr<C> c, juce::Point<int> size)
+    {
+        auto& ref = *c;
+        addItem (std::move (c), size);
+        return ref;
+    }
 
     int preferredHeight (int forWidth) const;
     void paint (juce::Graphics&) override;

@@ -447,8 +447,9 @@ void FmDevice::timerCallback()
         const auto [voice, addr] = it->first;
         const auto value = it->second;
         pendingParams.erase (it);
-        send (voice == fm::kDrumPart ? sysex::drumParameterWrite (deviceNumber, (uint8_t) addr, value)
-                                     : sysex::parameterWrite (deviceNumber, voice, (uint8_t) addr, value));
+        send (voice == fm::kDrumPart       ? sysex::drumParameterWrite (deviceNumber, (uint8_t) addr, value)
+              : voice == fm::kEnsemblePart ? sysex::ensembleParameterWrite (deviceNumber, (uint8_t) addr, value)
+                                           : sysex::parameterWrite (deviceNumber, voice, (uint8_t) addr, value));
         lastParamSendAt = juce::Time::getMillisecondCounter();
     }
 

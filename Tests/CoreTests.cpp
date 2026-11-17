@@ -2,6 +2,7 @@
 // official MIDIbox FM preset bank.
 
 #include "fm/Drums.h"
+#include "fm/Ensemble.h"
 #include "fm/Params.h"
 #include "fm/Randomizer.h"
 #include "fm/SyxFile.h"
@@ -243,6 +244,64 @@ static void testDrums()
             CHECK (p.getRaw (d) == base.getRaw (d));
 }
 
+static void testEnsembles()
+{
+    const auto& t = ensembleParams();
+    auto v = [&] (const Patch& p, int voice, const char* id) { return p.getRaw (t.get (ensembleId (voice, id))); };
+
+    // Messages.
+    CHECK ((sysex::requestEnsemble (0, 1, 31) == sysex::Bytes { 0xf0, 0, 0, 0x7e, 0x49, 0, 0x01, 0x70, 1, 31, 0xf7 }));
+    CHECK ((sysex::requestEnsembleRam (0) == sysex::Bytes { 0xf0, 0, 0, 0x7e, 0x49, 0, 0x01, 0x78, 0, 0, 0xf7 }));
+    CHECK ((sysex::ensembleParameterWrite (0, 0x32, 5) == sysex::Bytes { 0xf0, 0, 0, 0x7e, 0x49, 0, 0x06, 0x78, 0, 0x32, 5, 0xf7 }));
+    // Reading a stored patch into voice 3.
+    CHECK ((sysex::requestStored (0, 2, 9, 2) == sysex::Bytes { 0xf0, 0, 0, 0x7e, 0x49, 0, 0x01, 0x02, 2, 9, 0xf7 }));
+    {
+        const auto m = sysex::writeEnsembleRam (0, makeInitEnsemble());
+        const auto parsed = sysex::parse (m.data(), m.size());
+        CHECK (parsed && parsed->kind == sysex::Message::Kind::PatchDump && parsed->checksumOk);
+        CHECK (parsed && parsed->isEnsemble() && parsed->isEnsembleRam() && ! parsed->isDrums() && ! parsed->isVoice());
+        CHECK (parsed && parsed->patch == makeInitEnsemble());
+    }
+
+    // The firmware's 32 preset ensembles.
+    const auto bytes = load ("midibox_fm_ensembles.syx");
+    const auto r = syx::read (bytes.data(), bytes.size());
+    CHECK (r.patches.size() == 32 && r.otherMessages == 0);
+    for (size_t i = 0; i < r.patches.size(); ++i)
+    {
+        const auto& e = r.patches[i];
+        CHECK (e.ensemble && ! e.ensembleRam && ! e.drums && e.checksumOk && e.bank == 0 && e.patchNumber == i);
+        CHECK (e.patch == makeInitEnsemble());
+    }
+    if (! r.patches.empty())
+    {
+        const auto& e = r.patches.front().patch;
+        CHECK (ensemblePatch (e, 0) == 4 && ensemblePatch (e, 3) == 98 && ensembleBank (e, 2) == 0);
+        for (int voice = 0; voice < kVoices; ++voice)
+        {
+            CHECK (ensembleChannel (e, voice) == voice + 1);
+            CHECK (v (e, voice, "keylo") == 0 && v (e, voice, "keyhi") == 127 && v (e, voice, "volume") == 127);
+            CHECK (t.get (ensembleId (voice, "transpose")).offset == 64 && v (e, voice, "transpose") == 64);
+            CHECK (v (e, voice, "op12.out1") == 1 && v (e, voice, "op34.out4") == 1);
+        }
+        std::vector<syx::Entry> entries (r.patches.begin(), r.patches.end());
+        CHECK (syx::write (entries) == bytes);
+    }
+
+    // Every parameter lies in its voice's 11 bytes and fields don't overlap.
+    std::map<int, int> used;
+    for (auto& d : t.all())
+    {
+        CHECK (d.addr < kEnsembleDataSize && (d.addr % kEnsembleVoiceStride) <= 0x0a);
+        CHECK (d.id[1] - '1' == d.addr / kEnsembleVoiceStride);
+        const int mask = d.maxRaw() << d.shift;
+        CHECK ((used[d.addr] & mask) == 0);
+        used[d.addr] |= mask;
+        CHECK (mask <= 0x7f);
+    }
+    CHECK (t.all().size() == 4 * 17);
+}
+
 int main()
 {
     testMessages();
@@ -250,6 +309,7 @@ int main()
     testPresets();
     testRandomizer();
     testDrums();
+    testEnsembles();
     std::printf (failures == 0 ? "All tests passed\n" : "%d failure(s)\n", failures);
     return failures == 0 ? 0 : 1;
 }

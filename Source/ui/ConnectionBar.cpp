@@ -45,7 +45,7 @@ ConnectionBar::ConnectionBar (Session& s) : session (s)
         keysBox.addItem ("Keys to ch " + juce::String (ch), ch + 1);
     keysBox.setTooltip ("MIDI from your keyboard (standalone: Options > Audio/MIDI Settings > Active MIDI Inputs) "
                         "or the DAW track is passed to the MIDIbox FM. \"Edited voice\" plays the voice you are "
-                        "editing (channels 1-4 for voices 1-4, the default ensemble).");
+                        "editing, on its MIDI channel from the ensemble.");
     keysBox.onChange = [this]
     {
         const int id = keysBox.getSelectedId();
@@ -135,14 +135,19 @@ void ConnectionBar::fmActivity (bool outgoing)
 
 void ConnectionBar::refreshPart()
 {
-    const bool d = session.isDrumMode();
-    getButton.setButtonText (d ? "Get Drums" : "Get Voice");
-    sendButton.setButtonText (d ? "Send Drums" : "Send Voice");
-    getButton.setTooltip (d ? "Read the drum set the MIDIbox FM is playing" : "Read the patch the edited voice is playing on the MIDIbox FM");
+    const bool d = session.isDrumMode(), e = session.isEnsembleMode();
+    getButton.setButtonText (d ? "Get Drums" : e ? "Get Ens." : "Get Voice");
+    sendButton.setButtonText (d ? "Send Drums" : e ? "Send Ens." : "Send Voice");
+    getButton.setTooltip (d ? "Read the drum set the MIDIbox FM is playing"
+                          : e ? "Read the ensemble the MIDIbox FM is playing"
+                              : "Read the patch the edited voice is playing on the MIDIbox FM");
     sendButton.setTooltip (d ? "Send the drum set in the editor to the MIDIbox FM (not stored)"
-                             : "Send the whole patch in the editor to the edited voice (not stored)");
+                           : e ? "Send the ensemble in the editor to the MIDIbox FM (not stored). The voices reload their "
+                                 "stored patches, so unsaved voice edits are lost."
+                               : "Send the whole patch in the editor to the edited voice (not stored)");
     playButton.setTooltip (d ? "Play one bar of drums on MIDI channel 16 with this kit"
-                             : "Hold to play a test note (C3) on the edited voice");
+                           : e ? "Hold to play a test note (C3) on every voice's channel"
+                               : "Hold to play a test note (C3) on the edited voice");
     refreshKeys();
 }
 

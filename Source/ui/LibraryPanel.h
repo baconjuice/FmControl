@@ -6,7 +6,7 @@
 
 namespace ui
 {
-// Librarian: one bank of 128 voice patches (or 16 drum sets in drum mode),
+// Librarian: one bank of 128 voice patches (16 drum sets / 32 ensembles in those modes),
 // transfers to/from the box and .syx files.
 class LibraryPanel : public juce::Component,
                      private juce::ListBoxModel,
@@ -45,7 +45,7 @@ private:
         fetchButton { "Fetch" }, storeButton { "Store Here" }, openButton { "Open .syx" }, saveButton { "Save Bank" };
 
     std::optional<fm::Patch> clipboard;
-    bool clipboardIsDrums = false;
+    Session::Part clipboardPart = Session::Part::Voice;
     std::unique_ptr<juce::FileChooser> chooser;
     juce::File lastDir;
 };

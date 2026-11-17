@@ -19,7 +19,8 @@ add_library(fm_core STATIC
     Source/fm/SysEx.cpp
     Source/fm/SyxFile.cpp
     Source/fm/Randomizer.cpp
-    Source/fm/Drums.cpp)
+    Source/fm/Drums.cpp
+    Source/fm/Ensemble.cpp)
 target_include_directories(fm_core PUBLIC Source)
 target_compile_features(fm_core PUBLIC cxx_std_20)
 
@@ -52,6 +53,7 @@ target_sources(FmControl PRIVATE
     Source/ui/LookAndFeel.cpp
     Source/ui/RandomPanel.cpp
     Source/ui/DrumEditor.cpp
+    Source/ui/EnsembleEditor.cpp
     Source/ui/PixelFont.cpp
     Source/ui/ParamControls.cpp
     Source/ui/EditorCommon.cpp

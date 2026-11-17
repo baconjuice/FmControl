@@ -2,7 +2,9 @@
 #include "MidiLearn.h"
 #include "fm/Randomizer.h"
 
+#include <algorithm>
 #include <cstring>
+#include <utility>
 
 using namespace fm;
 
@@ -13,10 +15,38 @@ constexpr int kWriteTimeoutMs = 4000; // BankStick (EEPROM) writes are slow
 constexpr int kPlayNote = 60;
 } // namespace
 
-juce::String Session::slotName (int bank, int slot, bool drums)
+juce::String Session::slotName (int bank, int slot, Part p)
 {
-    return juce::String::charToString ((juce::juce_wchar) ('A' + bank)) + juce::String (slot + 1).paddedLeft ('0', drums ? 2 : 3);
+    return juce::String::charToString ((juce::juce_wchar) ('A' + bank)) + juce::String (slot + 1).paddedLeft ('0', p == Part::Voice ? 3 : 2);
 }
+
+juce::String Session::partNoun (Part p, bool plural)
+{
+    switch (p)
+    {
+        case Part::Drums:    return plural ? "drum sets" : "drum set";
+        case Part::Ensemble: return plural ? "ensembles" : "ensemble";
+        case Part::Voice:    break;
+    }
+    return plural ? "patches" : "patch";
+}
+
+namespace
+{
+Session::Part partOf (const sysex::Message& m)
+{
+    return m.isEnsemble() ? Session::Part::Ensemble : m.isDrums() ? Session::Part::Drums : Session::Part::Voice;
+}
+
+// The four patches an ensemble plays: "A005 A037 A084 A099".
+juce::String ensembleSummary (const Patch& e)
+{
+    juce::StringArray s;
+    for (int v = 0; v < kVoices; ++v)
+        s.add (Session::slotName (ensembleBank (e, v), ensemblePatch (e, v)));
+    return s.joinIntoString (" ");
+}
+} // namespace
 
 // Plays one bar of 16ths on the drum channel: kick, snare on 2 and 4,
 // closed hi-hat 8ths with an open one at the end, a crash on the one and a
@@ -82,6 +112,11 @@ int DrumTarget::getParam (const ParamDef& p) const { return session.drums().getR
 void DrumTarget::setParam (const ParamDef& p, int raw, uint8_t) { session.setDrumParam (p, raw); }
 int DrumTarget::defaultRaw (const ParamDef& p) const { return makeInitDrums().getRaw (p); }
 
+uint8_t EnsembleTarget::getByte (int addr) const { return session.getEnsemble().byte (addr); }
+int EnsembleTarget::getParam (const ParamDef& p) const { return session.getEnsemble().getRaw (p); }
+void EnsembleTarget::setParam (const ParamDef& p, int raw, uint8_t) { session.setEnsembleParam (p, raw); }
+int EnsembleTarget::defaultRaw (const ParamDef& p) const { return makeInitEnsemble().getRaw (p); }
+
 Session::Session (FmDevice& d) : device (d)
 {
     for (auto& v : voices)
@@ -109,9 +144,84 @@ void Session::fireDrumsReplaced()
     drumTarget.replaced();
 }
 
+void Session::fireEnsembleReplaced()
+{
+    ensembleTarget.replaced();
+    listeners.call ([] (Listener& l) { l.editReplaced(); });
+    updateKeyboardChannel();
+}
+
 juce::String Session::partName() const
 {
-    return drumMode ? juce::String ("drum set") : "voice " + juce::String (editVoice + 1);
+    return part == Part::Voice ? "voice " + juce::String (editVoice + 1) : partNoun (part);
+}
+
+const Patch& Session::current() const
+{
+    return part == Part::Drums ? drumKit : part == Part::Ensemble ? ensemble : edit();
+}
+
+Patch& Session::currentRef()
+{
+    return part == Part::Drums ? drumKit : part == Part::Ensemble ? ensemble : editRef();
+}
+
+std::vector<Patch>& Session::historyRef()
+{
+    return part == Part::Drums ? drumHistory : part == Part::Ensemble ? noHistory : randomHistory[(size_t) editVoice];
+}
+
+const std::vector<Patch>& Session::historyRef() const
+{
+    return part == Part::Drums ? drumHistory : part == Part::Ensemble ? noHistory : randomHistory[(size_t) editVoice];
+}
+
+std::vector<std::optional<Patch>>& Session::slotsFor (Part p)
+{
+    return p == Part::Drums ? drumSlots : p == Part::Ensemble ? ensembleSlots : slots;
+}
+
+const std::vector<std::optional<Patch>>& Session::slotsFor (Part p) const
+{
+    return p == Part::Drums ? drumSlots : p == Part::Ensemble ? ensembleSlots : slots;
+}
+
+int& Session::bankRef (Part p)
+{
+    return p == Part::Drums ? drumBankNumber : p == Part::Ensemble ? ensembleBankNumber : bankNumber;
+}
+
+int Session::bankFor (Part p) const
+{
+    return p == Part::Drums ? drumBankNumber : p == Part::Ensemble ? ensembleBankNumber : bankNumber;
+}
+
+int& Session::sourceSlotRef()
+{
+    return part == Part::Drums ? drumSourceSlot : part == Part::Ensemble ? ensembleSourceSlot : sourceSlot[(size_t) editVoice];
+}
+
+int Session::editorSourceSlot() const
+{
+    return part == Part::Drums ? drumSourceSlot : part == Part::Ensemble ? ensembleSourceSlot : sourceSlot[(size_t) editVoice];
+}
+
+juce::String Session::storedPatchLabel (int bank, int patch) const
+{
+    auto s = slotName (bank, patch);
+    if (bank == bankNumber && patch >= 0 && patch < kSlots && slots[(size_t) patch])
+        s << " " << juce::String (slots[(size_t) patch]->name()).trimEnd();
+    return s;
+}
+
+void Session::setPart (Part p)
+{
+    switch (p)
+    {
+        case Part::Voice:    setEditVoice (editVoice); break;
+        case Part::Drums:    setDrumMode (true); break;
+        case Part::Ensemble: setEnsembleMode (true); break;
+    }
 }
 
 void Session::fireChanged (const std::vector<uint16_t>& addresses)
@@ -126,11 +236,11 @@ void Session::fireChanged (const std::vector<uint16_t>& addresses)
 void Session::setEditVoice (int v)
 {
     v = juce::jlimit (0, kVoices - 1, v);
-    if (v == editVoice && ! drumMode)
+    if (v == editVoice && part == Part::Voice)
         return;
-    if (drumMode)
+    if (part != Part::Voice)
     {
-        drumMode = false;
+        part = Part::Voice;
         listeners.call ([] (Listener& l) { l.bankChanged(); });
     }
     editVoice = v;
@@ -144,14 +254,14 @@ void Session::setEditVoice (int v)
 
 void Session::setDrumMode (bool editDrums)
 {
-    if (editDrums == drumMode)
+    if (editDrums == (part == Part::Drums))
         return;
     if (! editDrums)
     {
         setEditVoice (editVoice);
         return;
     }
-    drumMode = true;
+    part = Part::Drums;
     updateKeyboardChannel();
     fireDrumsReplaced();
     listeners.call ([] (Listener& l) { l.bankChanged(); });
@@ -159,6 +269,83 @@ void Session::setDrumMode (bool editDrums)
         fetchDrums();
     else
         setStatus ("Editing the drum set (MIDI channel " + juce::String (kDrumChannel) + ")");
+}
+
+void Session::setEnsembleMode (bool editEnsemble)
+{
+    if (editEnsemble == (part == Part::Ensemble))
+        return;
+    if (! editEnsemble)
+    {
+        setEditVoice (editVoice);
+        return;
+    }
+    part = Part::Ensemble;
+    fireEnsembleReplaced();
+    listeners.call ([] (Listener& l) { l.bankChanged(); });
+    if (! ensembleKnown && device.isOutputOpen() && device.isInputOpen())
+        fetchEnsemble();
+    else
+        setStatus ("Editing the ensemble");
+}
+
+void Session::setEnsembleParam (const ParamDef& p, int raw)
+{
+    auto changed = ensemble.setRaw (p, raw);
+    if (changed.empty())
+        return;
+    if (live)
+    {
+        // A new bank or patch only takes effect when the voice loads it:
+        // reading the stored patch into that voice does both (and tells us
+        // what it sounds like). Everything else is a plain register write.
+        const bool patchChange = p.id.size() > 3 && (p.id.compare (3, std::string::npos, "bank") == 0
+                                                     || p.id.compare (3, std::string::npos, "patch") == 0);
+        if (patchChange)
+            loadVoicePatchSoon (p.addr / kEnsembleVoiceStride);
+        else
+            for (auto addr : changed)
+                device.queueParameter (kEnsemblePart, addr, ensemble.byte (addr));
+    }
+    ensembleTarget.changed (changed);
+    updateKeyboardChannel();
+}
+
+void Session::loadVoicePatchSoon (int voice)
+{
+    voice &= 3;
+    const int gen = ++patchLoadGeneration[(size_t) voice];
+    juce::WeakReference<Session> self (this);
+    juce::Timer::callAfterDelay (200, [self, gen, voice]
+    {
+        auto* s = self.get();
+        if (s == nullptr || s->patchLoadGeneration[(size_t) voice] != gen || ! s->device.isOutputOpen())
+            return;
+        const int bank = ensembleBank (s->ensemble, voice), patch = ensemblePatch (s->ensemble, voice);
+        s->device.enqueue (sysex::requestStored (s->device.getDeviceNumber(), (uint8_t) bank, (uint8_t) patch, voice),
+                           FmDevice::Expect::Dump, kDumpTimeoutMs,
+                           [self, voice, bank, patch] (const FmDevice::Result& r)
+                           {
+                               auto* s2 = self.get();
+                               if (s2 == nullptr) return;
+                               const auto label = slotName (bank, patch);
+                               if (r.ok && r.reply != nullptr && r.reply->isVoice())
+                               {
+                                   s2->voices[(size_t) voice] = r.reply->patch;
+                                   s2->voiceKnown[(size_t) voice] = true;
+                                   s2->sourceSlot[(size_t) voice] = bank == s2->bankNumber ? patch : -1;
+                                   if (s2->part == Part::Voice && voice == s2->editVoice)
+                                       s2->fireReplaced();
+                                   s2->setStatus ("Voice " + juce::String (voice + 1) + " plays " + label + ": "
+                                                  + juce::String (r.reply->patch.name()));
+                               }
+                               else
+                               {
+                                   s2->setStatus ("Voice " + juce::String (voice + 1) + " could not load " + label + ": "
+                                                  + (r.error.isNotEmpty() ? r.error : juce::String ("no patch in the reply")));
+                               }
+                           });
+    });
 }
 
 void Session::setDrumParam (const ParamDef& p, int raw)
@@ -188,7 +375,7 @@ void Session::setKeysFollowVoice (bool f)
 void Session::updateKeyboardChannel()
 {
     if (followVoice)
-        device.setKeyboardChannel (drumMode ? kDrumChannel : voiceChannel (editVoice));
+        device.setKeyboardChannel (part == Part::Drums ? kDrumChannel : voiceChannel (editVoice));
 }
 
 void Session::setParam (const ParamDef& p, int raw, uint8_t)
@@ -235,7 +422,16 @@ void Session::setName (const juce::String& name)
 
 void Session::loadIntoEditor (const Patch& p, int fromSlot)
 {
-    if (drumMode)
+    if (part == Part::Ensemble)
+    {
+        ensemble = p;
+        ensembleSourceSlot = fromSlot;
+        fireEnsembleReplaced();
+        if (live)
+            sendEditBuffer();
+        return;
+    }
+    if (part == Part::Drums)
     {
         drumKit = p;
         drumSourceSlot = fromSlot;
@@ -253,11 +449,13 @@ void Session::loadIntoEditor (const Patch& p, int fromSlot)
 
 void Session::randomize (const std::string& section, float amount)
 {
+    if (part == Part::Ensemble)
+        return; // no random ensembles
     auto& history = historyRef();
     history.push_back (current());
     if (history.size() > 100)
         history.erase (history.begin());
-    if (drumMode)
+    if (part == Part::Drums)
     {
         fm::randomizeDrums (drumKit, section, amount, rng);
         drumSourceSlot = -1;
@@ -278,7 +476,7 @@ void Session::undoRandom()
         return;
     currentRef() = history.back();
     history.pop_back();
-    if (drumMode)
+    if (part == Part::Drums)
         fireDrumsReplaced();
     else
         fireReplaced();
@@ -306,9 +504,14 @@ void Session::sendEditBuffer()
         setStatus ("Select a MIDI output first");
         return;
     }
-    if (drumMode)
+    if (part == Part::Drums)
     {
         sendDrums();
+        return;
+    }
+    if (part == Part::Ensemble)
+    {
+        sendEnsemble();
         return;
     }
     device.clearPendingParameters();
@@ -338,6 +541,83 @@ void Session::sendDrums()
                     });
 }
 
+void Session::sendEnsemble()
+{
+    device.clearPendingParameters();
+    juce::WeakReference<Session> self (this);
+    device.enqueue (sysex::writeEnsembleRam (device.getDeviceNumber(), ensemble), FmDevice::Expect::Ack, kDumpTimeoutMs,
+                    [self] (const FmDevice::Result& r)
+                    {
+                        auto* s = self.get();
+                        if (s == nullptr) return;
+                        if (! r.ok)
+                        {
+                            s->setStatus ("Send failed: " + r.error);
+                            return;
+                        }
+                        s->ensembleKnown = true;
+                        s->setStatus ("Sent ensemble: the voices now play " + ensembleSummary (s->ensemble));
+                        s->rereadVoicesAndDrums();
+                    });
+}
+
+void Session::fetchEnsemble (bool quiet)
+{
+    juce::WeakReference<Session> self (this);
+    if (! quiet)
+        setStatus ("Requesting the ensemble...");
+    device.enqueue (sysex::requestEnsembleRam (device.getDeviceNumber()), FmDevice::Expect::Dump, kDumpTimeoutMs,
+                    [self, quiet] (const FmDevice::Result& r)
+                    {
+                        auto* s = self.get();
+                        if (s == nullptr) return;
+                        if (r.ok && r.reply != nullptr && r.reply->isEnsemble())
+                        {
+                            s->ensemble = r.reply->patch;
+                            s->ensembleKnown = true;
+                            s->ensembleSourceSlot = -1;
+                            s->fireEnsembleReplaced();
+                            if (! quiet)
+                                s->setStatus ("Received the ensemble the MIDIbox FM is playing: " + ensembleSummary (s->ensemble));
+                        }
+                        else if (! quiet)
+                        {
+                            s->setStatus ("Fetch failed: " + (r.error.isNotEmpty() ? r.error : juce::String ("no ensemble in the reply")));
+                        }
+                    });
+}
+
+void Session::rereadVoicesAndDrums()
+{
+    juce::WeakReference<Session> self (this);
+    for (int v = 0; v < kVoices; ++v)
+        device.enqueue (sysex::requestVoice (device.getDeviceNumber(), v), FmDevice::Expect::Dump, kDumpTimeoutMs,
+                        [self, v] (const FmDevice::Result& r)
+                        {
+                            auto* s = self.get();
+                            if (s == nullptr || ! r.ok || r.reply == nullptr || ! r.reply->isVoice()) return;
+                            s->voices[(size_t) v] = r.reply->patch;
+                            s->voiceKnown[(size_t) v] = true;
+                            const int bank = ensembleBank (s->ensemble, v);
+                            s->sourceSlot[(size_t) v] = bank == s->bankNumber ? ensemblePatch (s->ensemble, v) : -1;
+                            if (s->part == Part::Voice && v == s->editVoice)
+                                s->fireReplaced();
+                        });
+    device.enqueue (sysex::requestDrumsRam (device.getDeviceNumber()), FmDevice::Expect::Dump, kDumpTimeoutMs,
+                    [self] (const FmDevice::Result& r)
+                    {
+                        auto* s = self.get();
+                        if (s == nullptr || ! r.ok || r.reply == nullptr || ! r.reply->isDrums()) return;
+                        s->drumKit = r.reply->patch;
+                        s->drumKnown = true;
+                        s->drumSourceSlot = -1;
+                        if (s->part == Part::Drums)
+                            s->fireDrumsReplaced();
+                        else
+                            s->drumTarget.replaced();
+                    });
+}
+
 void Session::fetchDrums()
 {
     juce::WeakReference<Session> self (this);
@@ -352,7 +632,7 @@ void Session::fetchDrums()
                             s->drumKit = r.reply->patch;
                             s->drumKnown = true;
                             s->drumSourceSlot = -1;
-                            if (s->drumMode)
+                            if (s->part == Part::Drums)
                                 s->fireDrumsReplaced();
                             s->setStatus ("Received the drum set the MIDIbox FM is playing");
                         }
@@ -365,11 +645,19 @@ void Session::fetchDrums()
 
 void Session::fetchEditBuffer()
 {
-    if (drumMode)
+    if (part == Part::Drums)
     {
         fetchDrums();
         return;
     }
+    if (part == Part::Ensemble)
+    {
+        fetchEnsemble();
+        return;
+    }
+    // The ensemble says which MIDI channel each voice listens on.
+    if (! ensembleKnown)
+        fetchEnsemble (true);
     juce::WeakReference<Session> self (this);
     const int v = editVoice;
     setStatus ("Requesting voice " + juce::String (v + 1) + "...");
@@ -383,7 +671,7 @@ void Session::fetchEditBuffer()
                             s->voices[(size_t) v] = r.reply->patch;
                             s->voiceKnown[(size_t) v] = true;
                             s->sourceSlot[(size_t) v] = -1;
-                            if (v == s->editVoice)
+                            if (v == s->editVoice && s->part == Part::Voice)
                                 s->fireReplaced();
                             s->setStatus ("Voice " + juce::String (v + 1) + ": " + juce::String (r.reply->patch.name()));
                         }
@@ -409,7 +697,7 @@ void Session::storeVoiceOnBox()
 
 void Session::playNote (bool on)
 {
-    if (drumMode)
+    if (part == Part::Drums)
     {
         if (on)
             playDrumBeat();
@@ -417,13 +705,20 @@ void Session::playNote (bool on)
     }
     if (on)
     {
-        playingNoteChannel = voiceChannel (editVoice);
-        device.sendMidi (juce::MidiMessage::noteOn (playingNoteChannel, kPlayNote, (juce::uint8) 100));
+        // The ensemble plays all its voices (each on its own channel), a voice just itself.
+        playingChannels.clear();
+        for (int v = 0; v < kVoices; ++v)
+            if (part == Part::Ensemble || v == editVoice)
+                if (const int ch = voiceChannel (v); std::find (playingChannels.begin(), playingChannels.end(), ch) == playingChannels.end())
+                    playingChannels.push_back (ch);
+        for (int ch : playingChannels)
+            device.sendMidi (juce::MidiMessage::noteOn (ch, kPlayNote, (juce::uint8) 100));
     }
-    else if (playingNoteChannel > 0)
+    else
     {
-        device.sendMidi (juce::MidiMessage::noteOff (playingNoteChannel, kPlayNote));
-        playingNoteChannel = 0;
+        for (int ch : playingChannels)
+            device.sendMidi (juce::MidiMessage::noteOff (ch, kPlayNote));
+        playingChannels.clear();
     }
 }
 
@@ -434,7 +729,7 @@ void Session::allNotesOff()
         device.sendMidi (juce::MidiMessage::allNotesOff (ch));
         device.sendMidi (juce::MidiMessage::controllerEvent (ch, 64, 0)); // sustain pedal up
     }
-    playingNoteChannel = 0;
+    playingChannels.clear();
     if (beat != nullptr)
         beat->stop();
 }
@@ -463,7 +758,7 @@ void Session::ping()
 // ---------------------------------------------------------------------------
 void Session::setSlot (int i, std::optional<Patch> p)
 {
-    auto& list = slotsFor (drumMode);
+    auto& list = slotsFor (part);
     if (i < 0 || i >= (int) list.size()) return;
     list[(size_t) i] = std::move (p);
     listeners.call ([] (Listener& l) { l.bankChanged(); });
@@ -471,31 +766,121 @@ void Session::setSlot (int i, std::optional<Patch> p)
 
 void Session::setBankNumber (int b)
 {
-    (drumMode ? drumBankNumber : bankNumber) = juce::jlimit (0, kBanks - 1, b);
+    bankRef (part) = juce::jlimit (0, kBanks - 1, b);
     listeners.call ([] (Listener& l) { l.bankChanged(); });
 }
 
-sysex::Bytes Session::requestSlot (bool d, int bank, int i) const
+sysex::Bytes Session::requestSlot (Part p, int bank, int i) const
 {
-    return d ? sysex::requestDrums (device.getDeviceNumber(), (uint8_t) bank, (uint8_t) i)
-             : sysex::requestStored (device.getDeviceNumber(), (uint8_t) bank, (uint8_t) i);
+    const auto dev = device.getDeviceNumber();
+    switch (p)
+    {
+        case Part::Drums:    return sysex::requestDrums (dev, (uint8_t) bank, (uint8_t) i);
+        case Part::Ensemble: return sysex::requestEnsemble (dev, (uint8_t) bank, (uint8_t) i);
+        case Part::Voice:    break;
+    }
+    return sysex::requestStored (dev, (uint8_t) bank, (uint8_t) i);
 }
 
-sysex::Bytes Session::writeSlot (bool d, int bank, int i, const Patch& p) const
+sysex::Bytes Session::writeSlot (Part p, int bank, int i, const Patch& patch) const
 {
-    return d ? sysex::writeDrums (device.getDeviceNumber(), (uint8_t) bank, (uint8_t) i, p)
-             : sysex::writeStored (device.getDeviceNumber(), (uint8_t) bank, (uint8_t) i, p);
+    const auto dev = device.getDeviceNumber();
+    switch (p)
+    {
+        case Part::Drums:    return sysex::writeDrums (dev, (uint8_t) bank, (uint8_t) i, patch);
+        case Part::Ensemble: return sysex::writeEnsemble (dev, (uint8_t) bank, (uint8_t) i, patch);
+        case Part::Voice:    break;
+    }
+    return sysex::writeStored (dev, (uint8_t) bank, (uint8_t) i, patch);
 }
 
 namespace
 {
-juce::String describe (const Patch& p, bool drums) { return drums ? juce::String ("drum set") : juce::String (p.name()); }
+juce::String describe (const Patch& p, Session::Part part)
+{
+    switch (part)
+    {
+        case Session::Part::Drums:    return "drum set";
+        case Session::Part::Ensemble: return ensembleSummary (p);
+        case Session::Part::Voice:    break;
+    }
+    return p.name();
+}
+} // namespace
+
+void Session::saveVoice1Then (std::function<void()> next)
+{
+    voice1Before.reset();
+    voice1SlotBefore.reset();
+    juce::WeakReference<Session> self (this);
+    device.enqueue (sysex::requestEnsembleRam (device.getDeviceNumber()), FmDevice::Expect::Dump, kDumpTimeoutMs,
+                    [self] (const FmDevice::Result& r)
+                    {
+                        auto* s = self.get();
+                        if (s == nullptr) return;
+                        if (r.ok && r.reply != nullptr && r.reply->isEnsemble())
+                        {
+                            s->ensemble = r.reply->patch;
+                            s->ensembleKnown = true;
+                            s->ensembleTarget.replaced();
+                        }
+                        if (s->ensembleKnown)
+                            s->voice1SlotBefore = std::pair { ensembleBank (s->ensemble, 0), ensemblePatch (s->ensemble, 0) };
+                    });
+    device.enqueue (sysex::requestVoice (device.getDeviceNumber(), 0), FmDevice::Expect::Dump, kDumpTimeoutMs,
+                    [self, then = std::move (next)] (const FmDevice::Result& r)
+                    {
+                        auto* s = self.get();
+                        if (s == nullptr) return;
+                        if (r.ok && r.reply != nullptr && r.reply->isVoice())
+                            s->voice1Before = r.reply->patch;
+                        else if (s->voiceKnown[0])
+                            s->voice1Before = s->voices[0];
+                        then();
+                    });
+}
+
+void Session::restoreVoice1 (bool patchToo)
+{
+    const auto slotBefore = std::exchange (voice1SlotBefore, std::nullopt);
+    const auto saved = std::exchange (voice1Before, std::nullopt);
+    const auto dev = device.getDeviceNumber();
+    if (slotBefore)
+    {
+        // Plain register writes: they don't reload the voice.
+        device.enqueue (sysex::ensembleParameterWrite (dev, 0x00, (uint8_t) slotBefore->first), FmDevice::Expect::Ack, kDumpTimeoutMs, {});
+        device.enqueue (sysex::ensembleParameterWrite (dev, 0x01, (uint8_t) slotBefore->second), FmDevice::Expect::Ack, kDumpTimeoutMs, {});
+    }
+    if (! patchToo || ! saved)
+        return;
+    juce::WeakReference<Session> self (this);
+    device.enqueue (sysex::writeVoice (dev, 0, *saved), FmDevice::Expect::Ack, kDumpTimeoutMs,
+                    [self, p = *saved] (const FmDevice::Result& r)
+                    {
+                        auto* s = self.get();
+                        if (s == nullptr || ! r.ok) return;
+                        s->voices[0] = p;
+                        s->voiceKnown[0] = true;
+                        if (s->part == Part::Voice && s->editVoice == 0)
+                            s->fireReplaced();
+                    });
 }
 
 void Session::fetchSlot (int i, bool thenEdit)
 {
+    if (part == Part::Voice && device.isInputOpen())
+    {
+        juce::WeakReference<Session> self (this);
+        saveVoice1Then ([self, i, thenEdit] { if (auto* s = self.get()) s->fetchSlotNow (i, thenEdit); });
+        return;
+    }
+    fetchSlotNow (i, thenEdit);
+}
+
+void Session::fetchSlotNow (int i, bool thenEdit)
+{
     juce::WeakReference<Session> self (this);
-    const bool d = drumMode;
+    const Part d = part;
     const int bank = getBankNumber();
     setStatus ("Requesting " + slotName (bank, i, d) + "...");
     device.enqueue (requestSlot (d, bank, i), FmDevice::Expect::Dump, kDumpTimeoutMs,
@@ -503,7 +888,11 @@ void Session::fetchSlot (int i, bool thenEdit)
                     {
                         auto* s = self.get();
                         if (s == nullptr) return;
-                        if (! r.ok || r.reply == nullptr || r.reply->isDrums() != d)
+                        // Voice 1 got this patch too: put back what it played (unless
+                        // it is the voice the patch is about to be opened in).
+                        if (d == Part::Voice)
+                            s->restoreVoice1 (! (thenEdit && s->part == Part::Voice && s->editVoice == 0 && r.ok));
+                        if (! r.ok || r.reply == nullptr || partOf (*r.reply) != d)
                         {
                             s->setStatus ("Fetch " + slotName (bank, i, d) + " failed: " + r.error);
                             return;
@@ -511,7 +900,18 @@ void Session::fetchSlot (int i, bool thenEdit)
                         s->slotsFor (d)[(size_t) i] = r.reply->patch;
                         s->listeners.call ([] (Listener& l) { l.bankChanged(); });
                         s->setStatus ("Received " + slotName (bank, i, d) + ": " + describe (r.reply->patch, d));
-                        if (thenEdit && s->drumMode == d)
+                        if (d == Part::Ensemble)
+                        {
+                            // Reading it switched the box to this ensemble, so
+                            // the editor now shows what plays.
+                            s->ensemble = r.reply->patch;
+                            s->ensembleKnown = true;
+                            s->ensembleSourceSlot = i;
+                            s->fireEnsembleReplaced();
+                            s->rereadVoicesAndDrums();
+                            return;
+                        }
+                        if (thenEdit && s->part == d)
                             s->loadIntoEditor (r.reply->patch, i);
                     });
 }
@@ -526,25 +926,107 @@ void Session::fetchBank()
     }
     busy = true;
     cancelRequested = false;
-    fetchNext (drumMode, 0, slotCount(), 0, 0);
+    if (part == Part::Drums)
+    {
+        fetchNext (part, 0, slotCount(), 0, 0);
+        return;
+    }
+    if (part == Part::Voice)
+    {
+        setStatus ("Reading voice 1, to put it back afterwards...");
+        juce::WeakReference<Session> self (this);
+        saveVoice1Then ([self]
+        {
+            auto* s = self.get();
+            if (s == nullptr) return;
+            if (s->cancelRequested)
+            {
+                s->busy = false;
+                s->restoreVoice1 (true);
+                return;
+            }
+            s->fetchNext (Part::Voice, 0, kSlots, 0, 0);
+        });
+        return;
+    }
+
+    // Reading each stored ensemble switches the box to it: remember the one
+    // it plays now, to put back at the end.
+    setStatus ("Reading the ensemble the MIDIbox FM is playing...");
+    juce::WeakReference<Session> self (this);
+    device.enqueue (sysex::requestEnsembleRam (device.getDeviceNumber()), FmDevice::Expect::Dump, kDumpTimeoutMs,
+                    [self] (const FmDevice::Result& r)
+                    {
+                        auto* s = self.get();
+                        if (s == nullptr) return;
+                        if (s->cancelRequested)
+                        {
+                            s->busy = false;
+                            return;
+                        }
+                        if (r.ok && r.reply != nullptr && r.reply->isEnsemble())
+                            s->ensembleBeforeTransfer = r.reply->patch;
+                        else
+                            s->ensembleBeforeTransfer = s->ensembleKnown ? std::optional<Patch> (s->ensemble) : std::nullopt;
+                        s->fetchNext (Part::Ensemble, 0, kEnsemblesPerBank, 0, 0);
+                    });
 }
 
-void Session::fetchNext (bool d, int i, int endExclusive, int got, int failed)
+void Session::finishEnsembleTransfer (const juce::String& message)
 {
-    const int bank = d ? drumBankNumber : bankNumber;
-    const juce::String what = d ? "drum sets" : "patches";
-    if (cancelRequested || i >= endExclusive)
+    juce::WeakReference<Session> self (this);
+    auto saved = std::exchange (ensembleBeforeTransfer, std::nullopt);
+    if (! saved)
+    {
+        setStatus (message);
+        fetchEnsemble (true);
+        rereadVoicesAndDrums();
+        return;
+    }
+    setStatus (message + "; restoring the ensemble...");
+    device.enqueue (sysex::writeEnsembleRam (device.getDeviceNumber(), *saved), FmDevice::Expect::Ack, kDumpTimeoutMs,
+                    [self, saved, message] (const FmDevice::Result& r)
+                    {
+                        auto* s = self.get();
+                        if (s == nullptr) return;
+                        if (! r.ok)
+                        {
+                            s->setStatus (message + "; could not restore the ensemble: " + r.error);
+                            return;
+                        }
+                        s->ensemble = *saved;
+                        s->ensembleKnown = true;
+                        s->fireEnsembleReplaced();
+                        s->rereadVoicesAndDrums();
+                        s->setStatus (message + "; the box plays " + ensembleSummary (*saved) + " again");
+                    });
+}
+
+void Session::fetchNext (Part d, int i, int endExclusive, int got, int failed)
+{
+    const int bank = bankFor (d);
+    const juce::String what = partNoun (d, true);
+    auto finish = [this, d] (const juce::String& message)
     {
         busy = false;
-        setStatus (juce::String (cancelRequested ? "Cancelled: " : "Bank fetched: ") + juce::String (got) + " " + what
-                   + (failed > 0 ? ", " + juce::String (failed) + " not available" : juce::String()));
+        if (d == Part::Ensemble)
+            finishEnsembleTransfer (message);
+        else
+            setStatus (message);
+        if (d == Part::Voice)
+            restoreVoice1 (true);
+    };
+    if (cancelRequested || i >= endExclusive)
+    {
+        finish (juce::String (cancelRequested ? "Cancelled: " : "Bank fetched: ") + juce::String (got) + " " + what
+                + (failed > 0 ? ", " + juce::String (failed) + " not available" : juce::String()));
         return;
     }
 
     setStatus ("Fetching " + slotName (bank, i, d) + "...", (float) i / (float) endExclusive);
     juce::WeakReference<Session> self (this);
     device.enqueue (requestSlot (d, bank, i), FmDevice::Expect::Dump, kDumpTimeoutMs,
-                    [self, d, i, endExclusive, got, failed] (const FmDevice::Result& r)
+                    [self, d, i, endExclusive, got, failed, finish] (const FmDevice::Result& r)
                     {
                         auto* s = self.get();
                         if (s == nullptr) return;
@@ -565,10 +1047,9 @@ void Session::fetchNext (bool d, int i, int endExclusive, int got, int failed)
                                 for (auto& slot : list)
                                     slot.reset();
                                 s->listeners.call ([] (Listener& l) { l.bankChanged(); });
-                                s->busy = false;
-                                const int b = d ? s->drumBankNumber : s->bankNumber;
-                                s->setStatus ("Bank " + juce::String::charToString ((juce::juce_wchar) ('A' + b))
-                                              + " is not available on the box (no BankStick for it)");
+                                const int b = s->bankFor (d);
+                                finish ("Bank " + juce::String::charToString ((juce::juce_wchar) ('A' + b))
+                                        + " is not available on the box (no BankStick for it)");
                                 return;
                             }
                             list[(size_t) i].reset();
@@ -577,9 +1058,7 @@ void Session::fetchNext (bool d, int i, int endExclusive, int got, int failed)
                         }
                         else
                         {
-                            s->busy = false;
-                            s->setStatus ("Bank fetch stopped at " + slotName (d ? s->drumBankNumber : s->bankNumber, i, d)
-                                          + ": " + r.error);
+                            finish ("Bank fetch stopped at " + slotName (s->bankFor (d), i, d) + ": " + r.error);
                         }
                     });
 }
@@ -588,7 +1067,7 @@ void Session::storeEditToSlot (int i)
 {
     if (i < 0 || i >= slotCount()) return;
     juce::WeakReference<Session> self (this);
-    const bool d = drumMode;
+    const Part d = part;
     const int bank = getBankNumber();
     const int v = editVoice;
     const Patch p = current();
@@ -600,10 +1079,16 @@ void Session::storeEditToSlot (int i)
                         if (s == nullptr) return;
                         if (r.ok)
                         {
-                            (d ? s->drumSourceSlot : s->sourceSlot[(size_t) v]) = i;
+                            (d == Part::Drums ? s->drumSourceSlot : d == Part::Ensemble ? s->ensembleSourceSlot : s->sourceSlot[(size_t) v]) = i;
                             s->slotsFor (d)[(size_t) i] = p;
                             s->listeners.call ([] (Listener& l) { l.bankChanged(); });
                             s->setStatus ("Stored " + slotName (bank, i, d) + ": " + describe (p, d));
+                            if (d == Part::Ensemble)
+                            {
+                                // Storing also loads it: the voices play their stored patches again.
+                                s->ensembleKnown = true;
+                                s->rereadVoicesAndDrums();
+                            }
                         }
                         else
                         {
@@ -615,7 +1100,7 @@ void Session::storeEditToSlot (int i)
 void Session::writeBankToDevice()
 {
     if (busy) return;
-    const bool d = drumMode;
+    const Part d = part;
     const auto& list = slotsFor (d);
     std::vector<int> todo;
     for (int i = (int) list.size() - 1; i >= 0; --i)
@@ -627,18 +1112,28 @@ void Session::writeBankToDevice()
     }
     busy = true;
     cancelRequested = false;
+    // Each stored ensemble also loads on the box; afterwards it gets the editor's one back.
+    if (d == Part::Ensemble)
+        ensembleBeforeTransfer = ensembleKnown ? std::optional<Patch> (ensemble) : std::nullopt;
     const int total = (int) todo.size();
     writeNext (d, std::move (todo), 0, 0, total);
 }
 
-void Session::writeNext (bool d, std::vector<int> remaining, int done, int failed, int total)
+void Session::writeNext (Part d, std::vector<int> remaining, int done, int failed, int total)
 {
-    const int bank = d ? drumBankNumber : bankNumber;
-    if (cancelRequested || remaining.empty())
+    const int bank = bankFor (d);
+    auto finish = [this, d] (const juce::String& message)
     {
         busy = false;
-        setStatus (juce::String (cancelRequested ? "Cancelled: " : "Bank written: ") + juce::String (done)
-                   + (d ? " drum sets" : " patches") + (failed > 0 ? ", " + juce::String (failed) + " failed" : juce::String()));
+        if (d == Part::Ensemble)
+            finishEnsembleTransfer (message);
+        else
+            setStatus (message);
+    };
+    if (cancelRequested || remaining.empty())
+    {
+        finish (juce::String (cancelRequested ? "Cancelled: " : "Bank written: ") + juce::String (done) + " " + partNoun (d, true)
+                + (failed > 0 ? ", " + juce::String (failed) + " failed" : juce::String()));
         return;
     }
     const int i = remaining.back();
@@ -647,14 +1142,13 @@ void Session::writeNext (bool d, std::vector<int> remaining, int done, int faile
 
     juce::WeakReference<Session> self (this);
     device.enqueue (writeSlot (d, bank, i, *slotsFor (d)[(size_t) i]), FmDevice::Expect::Ack, kWriteTimeoutMs,
-                    [self, d, remaining, done, failed, total] (const FmDevice::Result& r) mutable
+                    [self, d, remaining, done, failed, total, finish] (const FmDevice::Result& r) mutable
                     {
                         auto* s = self.get();
                         if (s == nullptr) return;
                         if (! r.ok && r.reply == nullptr)
                         {
-                            s->busy = false;
-                            s->setStatus ("Bank write stopped: " + r.error);
+                            finish ("Bank write stopped: " + r.error);
                             return;
                         }
                         s->writeNext (d, std::move (remaining), done + (r.ok ? 1 : 0), failed + (r.ok ? 0 : 1), total);
@@ -682,54 +1176,57 @@ bool Session::loadSyx (const juce::File& f, juce::String& message)
     auto r = syx::read (static_cast<const uint8_t*> (mb.getData()), mb.getSize());
     if (r.patches.empty())
     {
-        message = f.getFileName() + " contains no MIDIbox FM voice patches or drum sets";
+        message = f.getFileName() + " contains no MIDIbox FM voice patches, drum sets or ensembles";
         return false;
     }
 
-    int bad = 0, voiceCount = 0, drumCount = 0;
+    auto partOfEntry = [] (const syx::Entry& e) { return e.ensemble ? Part::Ensemble : e.drums ? Part::Drums : Part::Voice; };
+    int bad = 0;
+    std::array<int, 3> count {}; // per Part
     for (auto& e : r.patches)
     {
         if (! e.checksumOk) ++bad;
-        (e.drums ? drumCount : voiceCount)++;
+        ++count[(size_t) partOfEntry (e)];
     }
 
-    // A file of drum sets switches to drum mode, one of voice patches back
-    // to the voices (a mixed file fills both lists and stays where it is).
-    // (Marked as known first, so switching doesn't fetch from the box and
-    // overwrite what we load.)
-    if (drumCount > 0 && voiceCount == 0)
+    // A file of one kind switches the editor to that part (a mixed file
+    // fills the lists and stays where it is). A single dump is marked as
+    // known first, so switching doesn't fetch from the box and overwrite it.
+    if ((count[0] > 0) + (count[1] > 0) + (count[2] > 0) == 1)
     {
-        drumKnown = drumKnown || r.patches.size() == 1;
-        setDrumMode (true);
-    }
-    else if (voiceCount > 0 && drumCount == 0 && drumMode)
-    {
+        const Part p = partOfEntry (r.patches.front());
         if (r.patches.size() == 1)
-            voiceKnown[(size_t) editVoice] = true;
-        setEditVoice (editVoice);
+        {
+            if (p == Part::Drums) drumKnown = true;
+            if (p == Part::Ensemble) ensembleKnown = true;
+            if (p == Part::Voice) voiceKnown[(size_t) editVoice] = true;
+        }
+        setPart (p);
     }
 
     if (r.patches.size() == 1)
     {
         const auto& e = r.patches.front();
         loadIntoEditor (e.patch);
-        message = e.drums ? juce::String ("Loaded drum set") : "Loaded patch " + juce::String (e.patch.name());
+        message = e.ensemble ? "Loaded ensemble " + ensembleSummary (e.patch)
+                  : e.drums  ? juce::String ("Loaded drum set")
+                             : "Loaded patch " + juce::String (e.patch.name());
     }
     else
     {
         for (auto& e : r.patches)
         {
-            auto& list = slotsFor (e.drums);
+            auto& list = slotsFor (partOfEntry (e));
             const size_t i = (size_t) (e.patchNumber & 0x7f);
             if (i < list.size())
                 list[i] = e.patch;
         }
         listeners.call ([] (Listener& l) { l.bankChanged(); });
-        message = "Loaded";
-        if (voiceCount > 0) message << " " << voiceCount << " patches";
-        if (voiceCount > 0 && drumCount > 0) message << " and";
-        if (drumCount > 0) message << " " << drumCount << " drum sets";
-        message << " from " << f.getFileName();
+        juce::StringArray parts;
+        for (auto p : { Part::Voice, Part::Drums, Part::Ensemble })
+            if (const int n = count[(size_t) p]; n > 0)
+                parts.add (juce::String (n) + " " + partNoun (p, true));
+        message = "Loaded " + parts.joinIntoString (", ") + " from " + f.getFileName();
     }
     if (bad > 0)
         message << " (" << bad << " with bad checksum)";
@@ -738,7 +1235,7 @@ bool Session::loadSyx (const juce::File& f, juce::String& message)
 
 bool Session::saveBankSyx (const juce::File& f, juce::String& message) const
 {
-    const bool d = drumMode;
+    const Part d = part;
     const auto& list = slotsFor (d);
     std::vector<syx::Entry> entries;
     for (int i = 0; i < (int) list.size(); ++i)
@@ -747,7 +1244,8 @@ bool Session::saveBankSyx (const juce::File& f, juce::String& message) const
         syx::Entry e;
         e.bank = (uint8_t) getBankNumber();
         e.patchNumber = (uint8_t) i;
-        e.drums = d;
+        e.drums = d == Part::Drums;
+        e.ensemble = d == Part::Ensemble;
         e.patch = *list[(size_t) i];
         entries.push_back (e);
     }
@@ -762,19 +1260,21 @@ bool Session::saveBankSyx (const juce::File& f, juce::String& message) const
         message = "Could not write " + f.getFileName();
         return false;
     }
-    message = "Saved " + juce::String ((int) entries.size()) + (d ? " drum sets to " : " patches to ") + f.getFileName();
+    message = "Saved " + juce::String ((int) entries.size()) + " " + partNoun (d, true) + " to " + f.getFileName();
     return true;
 }
 
 bool Session::savePatchSyx (const juce::File& f, juce::String& message) const
 {
-    auto bytes = drumMode ? syx::writeDrumSet (drumKit) : syx::writeVoicePatch (edit());
+    auto bytes = part == Part::Drums      ? syx::writeDrumSet (drumKit)
+                 : part == Part::Ensemble ? syx::writeEnsembleSetup (ensemble)
+                                          : syx::writeVoicePatch (edit());
     if (! f.replaceWithData (bytes.data(), bytes.size()))
     {
         message = "Could not write " + f.getFileName();
         return false;
     }
-    message = "Saved " + (drumMode ? juce::String ("the drum set") : juce::String (edit().name())) + " to " + f.getFileName();
+    message = "Saved " + (part == Part::Voice ? juce::String (edit().name()) : "the " + partNoun (part)) + " to " + f.getFileName();
     return true;
 }
 
@@ -793,10 +1293,14 @@ juce::ValueTree Session::toValueTree() const
     v.setProperty ("keyboardChannel", device.getKeyboardChannel(), nullptr);
     v.setProperty ("bank", bankNumber, nullptr);
     v.setProperty ("editVoice", editVoice, nullptr);
-    v.setProperty ("drumMode", drumMode, nullptr);
+    v.setProperty ("part", (int) part, nullptr);
+    v.setProperty ("drumMode", part == Part::Drums, nullptr); // read by older versions
     v.setProperty ("drumBank", drumBankNumber, nullptr);
     v.setProperty ("drums", juce::Base64::toBase64 (drumKit.data.data(), kPatchSize), nullptr);
     v.setProperty ("drumSlot", drumSourceSlot, nullptr);
+    v.setProperty ("ensembleBank", ensembleBankNumber, nullptr);
+    v.setProperty ("ensemble", juce::Base64::toBase64 (ensemble.data.data(), kPatchSize), nullptr);
+    v.setProperty ("ensembleSlot", ensembleSourceSlot, nullptr);
     for (int i = 0; i < kVoices; ++i)
     {
         v.setProperty ("voice" + juce::String (i), juce::Base64::toBase64 (voices[(size_t) i].data.data(), kPatchSize), nullptr);
@@ -814,16 +1318,21 @@ juce::ValueTree Session::toValueTree() const
     }
     v.appendChild (b, nullptr);
 
-    juce::ValueTree db ("DrumBank");
-    for (int i = 0; i < kDrumSetsPerBank; ++i)
+    auto writeBank = [&v] (const char* type, const std::vector<std::optional<Patch>>& list)
     {
-        if (! drumSlots[(size_t) i]) continue;
-        juce::ValueTree s ("Slot");
-        s.setProperty ("index", i, nullptr);
-        s.setProperty ("data", juce::Base64::toBase64 (drumSlots[(size_t) i]->data.data(), kPatchSize), nullptr);
-        db.appendChild (s, nullptr);
-    }
-    v.appendChild (db, nullptr);
+        juce::ValueTree tree (type);
+        for (int i = 0; i < (int) list.size(); ++i)
+        {
+            if (! list[(size_t) i]) continue;
+            juce::ValueTree s ("Slot");
+            s.setProperty ("index", i, nullptr);
+            s.setProperty ("data", juce::Base64::toBase64 (list[(size_t) i]->data.data(), kPatchSize), nullptr);
+            tree.appendChild (s, nullptr);
+        }
+        v.appendChild (tree, nullptr);
+    };
+    writeBank ("DrumBank", drumSlots);
+    writeBank ("EnsembleBank", ensembleSlots);
     v.appendChild (midiLearn->toValueTree(), nullptr);
     return v;
 }
@@ -848,7 +1357,13 @@ void Session::fromValueTree (const juce::ValueTree& v)
     device.setKeyboardChannel (v.getProperty ("keyboardChannel", 0));
     bankNumber = juce::jlimit (0, kBanks - 1, (int) v.getProperty ("bank", 0));
     editVoice = juce::jlimit (0, kVoices - 1, (int) v.getProperty ("editVoice", 0));
-    drumMode = v.getProperty ("drumMode", false);
+    if (v.hasProperty ("part"))
+        part = (Part) juce::jlimit (0, 2, (int) v.getProperty ("part"));
+    else
+        part = (bool) v.getProperty ("drumMode", false) ? Part::Drums : Part::Voice;
+    ensembleBankNumber = juce::jlimit (0, kBanks - 1, (int) v.getProperty ("ensembleBank", 0));
+    ensembleSourceSlot = v.getProperty ("ensembleSlot", -1);
+    ensembleKnown = false;
     drumBankNumber = juce::jlimit (0, kBanks - 1, (int) v.getProperty ("drumBank", 0));
     drumSourceSlot = v.getProperty ("drumSlot", -1);
     drumKnown = false;
@@ -864,6 +1379,8 @@ void Session::fromValueTree (const juce::ValueTree& v)
 
     if (decode (v.getProperty ("drums").toString(), p))
         drumKit = p;
+    if (decode (v.getProperty ("ensemble").toString(), p))
+        ensemble = p;
 
     auto readBank = [&] (const juce::ValueTree& tree, std::vector<std::optional<Patch>>& list)
     {
@@ -878,6 +1395,7 @@ void Session::fromValueTree (const juce::ValueTree& v)
     };
     readBank (v.getChildWithName ("Bank"), slots);
     readBank (v.getChildWithName ("DrumBank"), drumSlots);
+    readBank (v.getChildWithName ("EnsembleBank"), ensembleSlots);
 
     midiLearn->fromValueTree (v.getChildWithName ("MidiLearn"));
 
@@ -889,6 +1407,7 @@ void Session::fromValueTree (const juce::ValueTree& v)
 
     fireReplaced();
     drumTarget.replaced();
+    ensembleTarget.replaced();
     listeners.call ([] (Listener& l) { l.bankChanged(); });
 }
 
@@ -897,13 +1416,31 @@ void Session::fromValueTree (const juce::ValueTree& v)
 // ---------------------------------------------------------------------------
 void Session::fmUnsolicitedDump (const sysex::Message& m)
 {
+    if (m.isEnsemble())
+    {
+        if (! m.isEnsembleRam() && m.bank == ensembleBankNumber && m.patchNumber < kEnsemblesPerBank)
+        {
+            ensembleSlots[(size_t) m.patchNumber] = m.patch;
+            listeners.call ([] (Listener& l) { l.bankChanged(); });
+            setStatus ("Received ensemble " + slotName (m.bank, m.patchNumber, Part::Ensemble));
+        }
+        else
+        {
+            ensemble = m.patch;
+            ensembleKnown = true;
+            ensembleSourceSlot = -1;
+            fireEnsembleReplaced();
+            setStatus ("Received the ensemble from MIDIbox FM: " + ensembleSummary (m.patch));
+        }
+        return;
+    }
     if (m.isDrums())
     {
         if (! m.isDrumsRam() && m.bank == drumBankNumber && m.patchNumber < kDrumSetsPerBank)
         {
             drumSlots[(size_t) m.patchNumber] = m.patch;
             listeners.call ([] (Listener& l) { l.bankChanged(); });
-            setStatus ("Received drum set " + slotName (m.bank, m.patchNumber, true));
+            setStatus ("Received drum set " + slotName (m.bank, m.patchNumber, Part::Drums));
         }
         else
         {
@@ -920,7 +1457,7 @@ void Session::fmUnsolicitedDump (const sysex::Message& m)
         const int v = m.voice();
         voices[(size_t) v] = m.patch;
         voiceKnown[(size_t) v] = true;
-        if (v == editVoice)
+        if (v == editVoice && part == Part::Voice)
             fireReplaced();
         setStatus ("Received voice " + juce::String (v + 1) + " from MIDIbox FM: " + juce::String (m.patch.name()));
     }

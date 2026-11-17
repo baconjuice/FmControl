@@ -257,6 +257,63 @@ int main (int argc, char** argv)
         return 0;
     }
 
+    if (cmd == "voice1check" && args.size() >= 3)
+    {
+        // Voice Fetch Bank through the Session must leave voice 1 and its
+        // ensemble bank/patch as they were.
+        auto in = findPort (ins, args[1]);
+        auto out = findPort (outs, args[2]);
+        FmDevice dev;
+        dev.openInput (in.identifier);
+        dev.openOutput (out.identifier);
+        auto readBoth = [&]
+        {
+            std::pair<fm::Patch, fm::Patch> r;
+            bool done = false;
+            dev.enqueue (fm::sysex::requestVoice (0, 0), FmDevice::Expect::Dump, 2500,
+                         [&] (const FmDevice::Result& x) { if (x.reply) r.first = x.reply->patch; });
+            dev.enqueue (fm::sysex::requestEnsembleRam (0), FmDevice::Expect::Dump, 2500,
+                         [&] (const FmDevice::Result& x) { if (x.reply) r.second = x.reply->patch; done = true; });
+            const auto end = juce::Time::getMillisecondCounter() + 8000;
+            while (! done && juce::Time::getMillisecondCounter() < end)
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (20);
+            return r;
+        };
+        const auto before = readBoth();
+        std::cout << "before: voice 1 = " << before.first.name() << ", ensemble v1 = "
+                  << Session::slotName (fm::ensembleBank (before.second, 0), fm::ensemblePatch (before.second, 0)) << "\n";
+        {
+            Session session (dev);
+            session.setLive (false);
+            session.setBankNumber (args.size() >= 4 ? args[3].getIntValue() : 0);
+            session.fetchBank();
+            auto end = juce::Time::getMillisecondCounter() + 200000;
+            while (session.isBusy() && juce::Time::getMillisecondCounter() < end)
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (50);
+            std::cout << "  " << session.getStatus() << "\n";
+            end = juce::Time::getMillisecondCounter() + 5000;
+            while (juce::Time::getMillisecondCounter() < end)
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (50);
+        }
+        const auto after = readBoth();
+        std::cout << "after:  voice 1 = " << after.first.name() << ", ensemble v1 = "
+                  << Session::slotName (fm::ensembleBank (after.second, 0), fm::ensemblePatch (after.second, 0)) << "\n";
+        // The wavetable (0x80-0xff) of a voice RAM read comes from a buffer the
+        // voices share on the box, so only name and parameters are compared.
+        bool same = before.second == after.second;
+        for (int i = 0; i < fm::kWavetableAddr; ++i)
+            same = same && before.first.data[(size_t) i] == after.first.data[(size_t) i];
+        for (int i = 0; i < fm::kPatchSize; ++i)
+        {
+            if (i < fm::kWavetableAddr && before.first.data[(size_t) i] != after.first.data[(size_t) i])
+                std::cout << "  voice byte " << i << ": " << (int) before.first.data[(size_t) i] << " -> " << (int) after.first.data[(size_t) i] << "\n";
+            if (before.second.data[(size_t) i] != after.second.data[(size_t) i])
+                std::cout << "  ensemble byte " << i << ": " << (int) before.second.data[(size_t) i] << " -> " << (int) after.second.data[(size_t) i] << "\n";
+        }
+        std::cout << (same ? "voice 1 and ensemble unchanged\n" : "CHANGED\n");
+        return same ? 0 : 1;
+    }
+
     if (cmd == "randomsend" && args.size() >= 3)
     {
         // Through the app's Session: read voice 4, roll "All", send it (waits
