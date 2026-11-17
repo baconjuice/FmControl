@@ -9,6 +9,20 @@ It talks to the box with the MIDIbox FM SysEx protocol (`F0 00 00 7E 49 <device>
 `apps/synthesizers/midibox_fm_v1/doc/midibox_fm_sysex_implementation.txt` in
 [midibox/mios8](https://github.com/midibox/mios8).
 
+## Download
+
+Get the latest build from [Releases](https://github.com/baconjuice/FmControl/releases): one zip for macOS 11 or
+later, Apple Silicon and Intel, with the standalone app, the VST3 and the AU. Copy `FmControl.app` to
+`/Applications`, `FmControl.vst3` to `~/Library/Audio/Plug-Ins/VST3` and `FmControl.component` to
+`~/Library/Audio/Plug-Ins/Components`.
+
+The builds are free and not notarized by Apple, so macOS blocks them the first time. Clear the download flag
+once in Terminal (or right-click the app and choose **Open**), then rescan plugins in your DAW:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/FmControl.app ~/Library/Audio/Plug-Ins/VST3/FmControl.vst3 ~/Library/Audio/Plug-Ins/Components/FmControl.component
+```
+
 ## Build
 
 Requires Xcode (or the command line tools) and CMake (`brew install cmake`).
