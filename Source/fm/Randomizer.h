@@ -27,4 +27,11 @@ const std::vector<RandomSection>& randomSections();
 // smaller values only move each parameter part of the way (0.25 = a gentle
 // variation of the current sound).
 void randomize (Patch& patch, const std::string& section, float amount, std::mt19937& rng);
+
+// The same for a drum set (the box has no drum randomizer, so these rules
+// are FmControl's own): sections All, BD, HH/SD, Tom/Cym, Envelopes,
+// Waveforms. Key ranges and audio outputs are never touched, so the kit
+// keeps playing on the same notes and outputs.
+const std::vector<RandomSection>& drumRandomSections();
+void randomizeDrums (Patch& drums, const std::string& section, float amount, std::mt19937& rng);
 } // namespace fm

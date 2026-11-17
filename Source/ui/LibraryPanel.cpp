@@ -27,8 +27,8 @@ LibraryPanel::LibraryPanel (Session& s) : session (s)
     writeBankButton.setTooltip ("Write every patch in this list to the MIDIbox FM's BankStick");
     writeBankButton.onClick = [this]
     {
-        confirmThen ("Write bank", "Overwrite bank " + bankLetter (session.getBankNumber())
-                                       + " on the MIDIbox FM with the patches in this list?",
+        confirmThen ("Write bank", "Overwrite bank " + bankLetter (session.getBankNumber()) + " on the MIDIbox FM with the "
+                                       + (session.isDrumMode() ? "drum sets" : "patches") + " in this list?",
                      [this] { session.writeBankToDevice(); });
     };
     fetchButton.setTooltip ("Read the selected patch from the MIDIbox FM and open it");
@@ -47,6 +47,18 @@ LibraryPanel::LibraryPanel (Session& s) : session (s)
 
     lastDir = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory);
     session.addListener (this);
+    updateTooltips();
+}
+
+void LibraryPanel::updateTooltips()
+{
+    const bool d = session.isDrumMode();
+    const juce::String what = d ? "drum set" : "patch";
+    fetchBankButton.setTooltip (d ? "Read all 16 drum sets of this bank from the MIDIbox FM"
+                                  : "Read all 128 patches of this bank from the MIDIbox FM");
+    writeBankButton.setTooltip ("Write every " + what + " in this list to the MIDIbox FM's BankStick");
+    fetchButton.setTooltip ("Read the selected " + what + " from the MIDIbox FM and open it");
+    storeButton.setTooltip ("Store the " + what + " in the editor into the selected slot on the MIDIbox FM");
 }
 
 LibraryPanel::~LibraryPanel()
@@ -57,6 +69,9 @@ LibraryPanel::~LibraryPanel()
 void LibraryPanel::bankChanged()
 {
     bankBox.setSelectedId (session.getBankNumber() + 1, juce::dontSendNotification);
+    if (list.getSelectedRow() >= session.slotCount())
+        list.deselectAllRows();
+    updateTooltips();
     list.updateContent();
     list.repaint();
 }
@@ -73,12 +88,15 @@ void LibraryPanel::paintListBoxItem (int row, juce::Graphics& g, int w, int h, b
     const auto& p = session.slot (row);
     g.setFont (font (12.5f));
     g.setColour (selected ? colours::onAccent : colours::dimText);
-    g.drawText (bankLetter (session.getBankNumber()) + juce::String (row + 1).paddedLeft ('0', 3), 6, 0, 40, h,
-                juce::Justification::centredLeft);
+    g.drawText (session.currentSlotName (row), 6, 0, 40, h, juce::Justification::centredLeft);
     if (p)
     {
+        // Drum sets have no name: show the program that selects it on channel 16.
+        const auto text = session.isDrumMode()
+                              ? "Drum Set   (PC " + juce::String (session.getBankNumber() * fm::kDrumSetsPerBank + row + 1) + ")"
+                              : juce::String (p->name());
         g.setColour (selected ? colours::onAccent : colours::accent);
-        g.drawText (juce::String (p->name()), 52, 0, w - 56, h, juce::Justification::centredLeft);
+        g.drawText (text, 52, 0, w - 56, h, juce::Justification::centredLeft);
     }
     else
     {
@@ -110,18 +128,20 @@ void LibraryPanel::showSlotMenu (int row)
 {
     list.selectRow (row);
     const auto& p = session.slot (row);
-    const auto slotLabel = bankLetter (session.getBankNumber()) + juce::String (row + 1).paddedLeft ('0', 3);
+    const bool d = session.isDrumMode();
+    const auto slotLabel = session.currentSlotName (row);
+    const juce::String what = d ? "drum set" : "patch";
 
     juce::PopupMenu m;
-    m.addSectionHeader (slotLabel + (p ? "  " + juce::String (p->name()) : juce::String()));
+    m.addSectionHeader (slotLabel + (p && ! d ? "  " + juce::String (p->name()) : juce::String()));
     m.addItem (1, "Open in editor", p.has_value());
     m.addItem (2, "Fetch from MIDIbox FM");
-    m.addItem (3, "Store editor patch here (on MIDIbox FM)");
+    m.addItem (3, "Store editor " + what + " here (on MIDIbox FM)");
     m.addSeparator();
     m.addItem (4, "Copy", p.has_value());
-    m.addItem (5, "Paste (list only)", clipboard.has_value());
-    m.addItem (6, "Put editor patch here (list only)");
-    m.addItem (10, "Init patch here (list only)");
+    m.addItem (5, "Paste (list only)", clipboard.has_value() && clipboardIsDrums == d);
+    m.addItem (6, "Put editor " + what + " here (list only)");
+    m.addItem (10, d ? juce::String ("Init kit here (list only)") : juce::String ("Init patch here (list only)"));
     m.addItem (7, "Clear (list only)", p.has_value());
 
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&list).withMousePosition(),
@@ -132,11 +152,11 @@ void LibraryPanel::showSlotMenu (int row)
                              case 1: openSlotInEditor (row); break;
                              case 2: session.fetchSlot (row, false); break;
                              case 3: list.selectRow (row); storeButton.triggerClick(); break;
-                             case 4: clipboard = session.slot (row); break;
+                             case 4: clipboard = session.slot (row); clipboardIsDrums = session.isDrumMode(); break;
                              case 5: if (clipboard) session.setSlot (row, clipboard); break;
-                             case 6: session.setSlot (row, session.edit()); break;
+                             case 6: session.setSlot (row, session.current()); break;
                              case 7: session.setSlot (row, std::nullopt); break;
-                             case 10: session.setSlot (row, fm::Patch::makeInit()); break;
+                             case 10: session.setSlot (row, session.isDrumMode() ? fm::makeInitDrums() : fm::Patch::makeInit()); break;
                              default: break;
                          }
                      });
@@ -146,8 +166,19 @@ void LibraryPanel::showSlotMenu (int row)
 // and warns when the slot already holds a different patch.
 void LibraryPanel::showStoreDialog (int row)
 {
-    const auto slotName = bankLetter (session.getBankNumber()) + juce::String (row + 1).paddedLeft ('0', 3);
+    const auto slotName = session.currentSlotName (row);
     const auto& existing = session.slot (row);
+    if (session.isDrumMode())
+    {
+        // No name to ask for: just confirm when it replaces another set.
+        if (existing && *existing != session.current())
+            confirmThen ("Store drum set in " + slotName,
+                         "Replace the drum set in " + slotName + " on the MIDIbox FM with the one in the editor?",
+                         [this, row] { session.storeEditToSlot (row); });
+        else
+            session.storeEditToSlot (row);
+        return;
+    }
     juce::String message = "Name the patch and store it in " + slotName + " on the MIDIbox FM.";
     if (existing && *existing != session.edit())
         message << "\n\nThis replaces \"" << juce::String (existing->name()).trimEnd() << "\" in " << slotName << ".";
@@ -209,7 +240,7 @@ void LibraryPanel::openSyx()
 
 void LibraryPanel::saveBank()
 {
-    auto start = lastDir.getChildFile ("FM Bank " + bankLetter (session.getBankNumber()) + ".syx");
+    auto start = lastDir.getChildFile ((session.isDrumMode() ? "FM Drum Sets " : "FM Bank ") + bankLetter (session.getBankNumber()) + ".syx");
     chooser = std::make_unique<juce::FileChooser> ("Save bank", start, "*.syx");
     chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting,
                           [this] (const juce::FileChooser& fc)

@@ -8,51 +8,11 @@ namespace
 {
 const fm::ParamTable& T() { return fm::voiceParams(); }
 
-// OPL frequency multiplier register -> factor.
-juce::String multText (int v)
-{
-    static const char* f[] = { "0.5", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "10", "12", "12", "15", "15" };
-    return juce::String ("x") + f[v & 15];
-}
-
 // Which operators reach the output for each algorithm (OP1..OP4 = bits 0..3).
 int carrierMask (int algorithm)
 {
     static const int masks[] = { 0b1000, 0b1001, 0b1010, 0b1101 };
     return masks[algorithm & 3];
-}
-
-// Draws a small picture of a curve given as normalised points.
-void drawCurve (juce::Graphics& g, juce::Rectangle<float> r, const std::vector<juce::Point<float>>& pts, juce::Colour c)
-{
-    juce::Path path;
-    for (size_t i = 0; i < pts.size(); ++i)
-    {
-        const float x = r.getX() + r.getWidth() * pts[i].x, y = r.getBottom() - r.getHeight() * pts[i].y;
-        if (i == 0) path.startNewSubPath (x, y); else path.lineTo (x, y);
-    }
-    juce::Path fill (path);
-    fill.lineTo (r.getRight(), r.getBottom());
-    fill.lineTo (r.getX(), r.getBottom());
-    fill.closeSubPath();
-    g.setColour (c.withAlpha (0.18f));
-    g.fillPath (fill);
-    g.setColour (c);
-    g.strokePath (path, juce::PathStrokeType (2.0f));
-}
-
-// Black "scope" screen with a dotted grid, behind graphs and diagrams.
-void drawScope (juce::Graphics& g, juce::Rectangle<float> r)
-{
-    g.setColour (colours::shadow);
-    g.fillRect (r);
-    g.setColour (colours::panelEdge.withAlpha (0.55f));
-    g.drawRect (r, 1.0f);
-    // Dots every 4 px along rows that are 8 px apart.
-    const auto inner = r.toNearestInt();
-    const juce::Point<int> first (inner.getX() + 8, inner.getY() + 8);
-    const auto area = juce::Rectangle<int>::leftTopRightBottom (first.x, first.y, inner.getRight() - 1, inner.getBottom() - 1);
-    fillDots (g, area, first, colours::panelEdge.withAlpha (0.4f), 4, 8, { { 0, 0 } });
 }
 
 class Listening : public juce::Component,

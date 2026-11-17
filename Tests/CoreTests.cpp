@@ -1,6 +1,7 @@
 // Core tests: SysEx encode/decode, parameter tables, .syx files, and the
 // official MIDIbox FM preset bank.
 
+#include "fm/Drums.h"
 #include "fm/Params.h"
 #include "fm/Randomizer.h"
 #include "fm/SyxFile.h"
@@ -151,12 +152,104 @@ static void testRandomizer()
         CHECK (std::abs (v (p, id) - v (base, id)) <= 13);
 }
 
+static void testDrums()
+{
+    const auto& t = drumParams();
+    auto v = [&] (const Patch& p, const char* id) { return p.getRaw (t.get (id)); };
+
+    // Messages.
+    CHECK ((sysex::requestDrums (0, 2, 5) == sysex::Bytes { 0xf0, 0, 0, 0x7e, 0x49, 0, 0x01, 0x10, 2, 5, 0xf7 }));
+    CHECK ((sysex::requestDrumsRam (1) == sysex::Bytes { 0xf0, 0, 0, 0x7e, 0x49, 1, 0x01, 0x18, 0, 0, 0xf7 }));
+    CHECK ((sysex::drumParameterWrite (0, 0x50, 0x40) == sysex::Bytes { 0xf0, 0, 0, 0x7e, 0x49, 0, 0x06, 0x18, 0, 0x50, 0x40, 0xf7 }));
+    {
+        const auto m = sysex::writeDrumsRam (0, makeInitDrums());
+        const auto parsed = sysex::parse (m.data(), m.size());
+        CHECK (parsed && parsed->kind == sysex::Message::Kind::PatchDump && parsed->checksumOk);
+        CHECK (parsed && parsed->isDrums() && parsed->isDrumsRam() && ! parsed->isVoiceRam());
+        CHECK (parsed && parsed->patch == makeInitDrums());
+    }
+
+    // The firmware's 16 preset drum sets.
+    const auto bytes = load ("midibox_fm_drumsets.syx");
+    const auto r = syx::read (bytes.data(), bytes.size());
+    CHECK (r.patches.size() == 16 && r.otherMessages == 0);
+    for (size_t i = 0; i < r.patches.size(); ++i)
+    {
+        const auto& e = r.patches[i];
+        CHECK (e.drums && ! e.drumsRam && e.checksumOk && e.bank == 0 && e.patchNumber == i);
+        for (size_t a = kDrumDataSize; a < kPatchSize; ++a)
+            CHECK (e.patch.data[a] == 0);
+    }
+    if (! r.patches.empty())
+    {
+        const auto& kit = r.patches.front().patch;
+        CHECK (kit == makeInitDrums());
+        CHECK (v (kit, "bd.freq") == 0x60 && v (kit, "bd.decr") == 0x48);
+        CHECK (v (kit, "hh.freq") == 0x6d && v (kit, "tom.freq") == 0x70);
+        CHECK (v (kit, "bdm.volume") == 0x28 && v (kit, "bdc.volume") == 0x3f);
+        CHECK (v (kit, "sd.mult") == 4 && v (kit, "cym.mult") == 5);
+        CHECK (v (kit, "sd.wave") == 2 && v (kit, "cym.wave") == 6);
+        CHECK (v (kit, "bd.out1") == 1 && v (kit, "bd.out2") == 0 && v (kit, "hhsd.out2") == 1 && v (kit, "tomcym.out2") == 1);
+        CHECK (drumNote (kit, "bd") == 36 && drumNote (kit, "sd") == 38 && drumNote (kit, "hhc") == 44
+               && drumNote (kit, "hho") == 46 && drumNote (kit, "tom") == 40 && drumNote (kit, "cym") == 48);
+
+        // Writing them back gives the same file.
+        std::vector<syx::Entry> entries (r.patches.begin(), r.patches.end());
+        CHECK (syx::write (entries) == bytes);
+    }
+
+    // Every parameter lies in the drum area and fields don't overlap.
+    std::map<int, int> used;
+    for (auto& d : t.all())
+    {
+        CHECK (d.addr < kDrumDataSize);
+        const int mask = d.maxRaw() << d.shift;
+        CHECK ((used[d.addr] & mask) == 0);
+        used[d.addr] |= mask;
+        CHECK (mask <= 0x7f);
+    }
+
+    // Random kits.
+    std::mt19937 rng (99);
+    const Patch base = makeInitDrums();
+    for (int i = 0; i < 300; ++i)
+    {
+        Patch p = base;
+        randomizeDrums (p, "all", 1.0f, rng);
+        for (auto& d : t.all())
+        {
+            const bool keyOrOut = d.id.find (".key") != std::string::npos || d.id.find (".out") != std::string::npos;
+            if (keyOrOut)
+                CHECK (p.getRaw (d) == base.getRaw (d));
+        }
+        for (auto& inst : drumInstruments())
+        {
+            const std::string id = inst.id;
+            CHECK (p.getRaw (t.get (id + ".attack")) <= 3);
+            const int rel = p.getRaw (t.get (id + ".release"));
+            CHECK (rel >= 3 && rel <= 12);
+            if (id != "bdm")
+                CHECK (p.getRaw (t.get (id + ".volume")) >= 40);
+        }
+        CHECK (v (p, "bdm.mult") <= 4 && v (p, "bdc.mult") <= 4);
+        for (size_t a = kDrumDataSize; a < kPatchSize; ++a)
+            CHECK (p.data[a] == 0);
+    }
+    // A section leaves the other instruments alone.
+    Patch p = base;
+    randomizeDrums (p, "bd", 1.0f, rng);
+    for (auto& d : t.all())
+        if (d.id.rfind ("bd", 0) != 0)
+            CHECK (p.getRaw (d) == base.getRaw (d));
+}
+
 int main()
 {
     testMessages();
     testParams();
     testPresets();
     testRandomizer();
+    testDrums();
     std::printf (failures == 0 ? "All tests passed\n" : "%d failure(s)\n", failures);
     return failures == 0 ? 0 : 1;
 }

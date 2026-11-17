@@ -9,6 +9,7 @@ namespace ui
 // Top bar: MIDI ports, device number, connection test and edit buffer actions.
 class ConnectionBar : public juce::Component,
                       private FmDevice::Listener,
+                      private Session::Listener,
                       private juce::Timer
 {
 public:
@@ -23,6 +24,8 @@ private:
     void refreshKeys();
     void fmActivity (bool outgoing) override;
     void fmPortsChanged() override;
+    void editReplaced() override { refreshPart(); }
+    void refreshPart();             // Voice or drum set wording on the buttons
     void timerCallback() override;
 
     Session& session;

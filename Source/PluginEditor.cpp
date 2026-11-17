@@ -40,13 +40,27 @@ FmControlEditor::FmControlEditor (FmControlProcessor& p)
         b->onClick = [this, v] { if (voiceButtons[v]->getToggleState()) session.setEditVoice (v); };
         addAndMakeVisible (b);
     }
+    {
+        // The drum set, like a fifth "voice".
+        auto* b = voiceButtons.add (new juce::TextButton ("DR"));
+        b->setClickingTogglesState (true);
+        b->setRadioGroupId (4711);
+        b->setTooltip ("Edit the drum set (MIDI channel " + juce::String (fm::kDrumChannel)
+                       + "); the library then shows the bank's 16 drum sets");
+        b->setConnectedEdges (juce::Button::ConnectedOnLeft);
+        b->onClick = [this, b] { if (b->getToggleState()) session.setDrumMode (true); };
+        addAndMakeVisible (b);
+        voiceButtons[fm::kVoices - 1]->setConnectedEdges (juce::Button::ConnectedOnLeft | juce::Button::ConnectedOnRight);
+    }
 
     sourceLabel.setFont (font (12.0f));
     sourceLabel.setColour (juce::Label::textColourId, colours::dimText);
     addAndMakeVisible (sourceLabel);
 
-    newButton.setTooltip ("Replace the edited voice's patch with the init patch");
-    newButton.onClick = [this] { session.loadIntoEditor (fm::Patch::makeInit()); };
+    newButton.onClick = [this]
+    {
+        session.loadIntoEditor (session.isDrumMode() ? fm::makeInitDrums() : fm::Patch::makeInit());
+    };
     openButton.onClick = [this] { library.openSyx(); };
     savePatchButton.onClick = [this] { savePatch(); };
     randomButton.setTooltip ("Random generator: roll new operators, LFOs, EG5 or wavetable (like RND on the box)");
@@ -58,6 +72,8 @@ FmControlEditor::FmControlEditor (FmControlProcessor& p)
 
     voiceEditor = std::make_unique<VoiceEditor> (session);
     addAndMakeVisible (*voiceEditor);
+    drumEditor = std::make_unique<DrumEditor> (session);
+    addChildComponent (*drumEditor);
 
     statusLabel.setFont (font (12.5f));
     statusLabel.setColour (juce::Label::textColourId, colours::onAccent);
@@ -98,6 +114,7 @@ FmControlEditor::~FmControlEditor()
 {
     session.removeListener (this);
     voiceEditor.reset();
+    drumEditor.reset();
     juce::LookAndFeel::setDefaultLookAndFeel (nullptr);
     setLookAndFeel (nullptr);
 }
@@ -144,6 +161,25 @@ void FmControlEditor::writeSnapshots (const juce::File& dir)
         out.truncate();
         juce::PNGImageFormat().writeImageToStream (img, out);
     }
+    {
+        // Drum set page and its random panel.
+        session.setDrumMode (true);
+        auto save = [&dir] (const juce::Image& img, const juce::String& file)
+        {
+            juce::FileOutputStream out (dir.getChildFile (file));
+            out.setPosition (0);
+            out.truncate();
+            juce::PNGImageFormat().writeImageToStream (img, out);
+        };
+        save (createComponentSnapshot (getLocalBounds(), true, 1.0f), "Drums.png");
+        ui::RandomPanel panel (session);
+        panel.setLookAndFeel (&lnf);
+        save (panel.createComponentSnapshot (panel.getLocalBounds(), true, 1.0f), "RandomPanel_Drums.png");
+        panel.setLookAndFeel (nullptr);
+        session.randomize ("all", 1.0f);
+        save (createComponentSnapshot (getLocalBounds(), true, 1.0f), "Drums_Random.png");
+        session.setEditVoice (0);
+    }
     if (auto* app = juce::JUCEApplicationBase::getInstance())
         app->systemRequestedQuit();
 }
@@ -156,14 +192,29 @@ void FmControlEditor::showRandomPanel()
 
 void FmControlEditor::refreshHeader()
 {
-    const juce::String name (session.edit().name());
+    const bool drums = session.isDrumMode();
+    const juce::String name = drums ? juce::String ("Drum Set") : juce::String (session.edit().name());
     if (nameEditor.getText().trimEnd() != name)
         nameEditor.setText (name, juce::dontSendNotification);
+    nameEditor.setReadOnly (drums);
+    nameEditor.setTooltip (drums ? "Drum sets have no name on the MIDIbox FM" : "Patch name (16 characters)");
+    nameLabel.setText (drums ? "Kit" : "Patch", juce::dontSendNotification);
     for (int v = 0; v < voiceButtons.size(); ++v)
-        voiceButtons[v]->setToggleState (v == session.getEditVoice(), juce::dontSendNotification);
+        voiceButtons[v]->setToggleState (drums ? v == fm::kDrumPart : v == session.getEditVoice(), juce::dontSendNotification);
     const int s = session.editorSourceSlot();
-    sourceLabel.setText (s >= 0 ? "from " + Session::slotName (session.getBankNumber(), s) : juce::String(),
-                         juce::dontSendNotification);
+    sourceLabel.setText (s >= 0 ? "from " + session.currentSlotName (s) : juce::String(), juce::dontSendNotification);
+
+    newButton.setButtonText (drums ? "Init Kit" : "Init Patch");
+    newButton.setTooltip (drums ? "Replace the drum set with the init kit (preset drum set 1)"
+                                : "Replace the edited voice's patch with the init patch");
+    savePatchButton.setButtonText (drums ? "Save Kit .syx" : "Save Patch .syx");
+    randomButton.setTooltip (drums ? "Random generator: roll a new kit, or just the bass drum, hi-hats, envelopes, ..."
+                                   : "Random generator: roll new operators, LFOs, EG5 or wavetable (like RND on the box)");
+    if (drumEditor != nullptr && voiceEditor != nullptr && drumEditor->isVisible() != drums)
+    {
+        drumEditor->setVisible (drums);
+        voiceEditor->setVisible (! drums);
+    }
 }
 
 void FmControlEditor::editChanged (const std::vector<uint16_t>& addresses)
@@ -191,7 +242,8 @@ void FmControlEditor::timerCallback()
 
 void FmControlEditor::savePatch()
 {
-    auto name = juce::File::createLegalFileName (juce::String (session.edit().name()).trim());
+    auto name = juce::File::createLegalFileName (session.isDrumMode() ? juce::String ("Drum Set")
+                                                                       : juce::String (session.edit().name()).trim());
     if (name.isEmpty()) name = "Patch";
     chooser = std::make_unique<juce::FileChooser> (
         "Save patch", juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile (name + ".syx"), "*.syx");
@@ -253,7 +305,7 @@ void FmControlEditor::resized()
     voiceLabel.setBounds (header.removeFromLeft (46));
     header.removeFromLeft (6);
     for (auto* b : voiceButtons)
-        b->setBounds (header.removeFromLeft (34).reduced (0, 2));
+        b->setBounds (header.removeFromLeft (b->getButtonText() == "DR" ? 40 : 34).reduced (0, 2));
     header.removeFromLeft (12);
     sourceLabel.setBounds (header.removeFromLeft (90));
     savePatchButton.setBounds (header.removeFromRight (120).reduced (0, 2));
@@ -265,4 +317,5 @@ void FmControlEditor::resized()
     randomButton.setBounds (header.removeFromRight (90).reduced (0, 2));
     main.removeFromTop (6);
     voiceEditor->setBounds (main);
+    drumEditor->setBounds (main);
 }

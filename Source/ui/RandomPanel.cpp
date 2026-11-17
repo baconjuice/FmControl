@@ -33,12 +33,15 @@ RandomPanel::RandomPanel (Session& s) : session (s)
     undoButton.onClick = [this] { session.undoRandom(); };
     addAndMakeVisible (undoButton);
 
-    hint.setText ("Each click rolls that part of the voice and sends it to the FM.", juce::dontSendNotification);
+    drums = session.isDrumMode();
+    hint.setText (drums ? "Each click rolls that part of the kit and sends it to the FM."
+                        : "Each click rolls that part of the voice and sends it to the FM.",
+                  juce::dontSendNotification);
     hint.setFont (font (11.0f));
     hint.setColour (juce::Label::textColourId, colours::dimText);
     addAndMakeVisible (hint);
 
-    for (auto& sec : fm::randomSections())
+    for (auto& sec : drums ? fm::drumRandomSections() : fm::randomSections())
     {
         auto* b = sectionButtons.add (new juce::TextButton (sec.label));
         b->setTooltip (sec.help);
@@ -82,7 +85,7 @@ void RandomPanel::paint (juce::Graphics& g)
 {
     g.fillAll (colours::panel);
     g.setColour (colours::accent2);
-    pixel::draw (g, "RND  Voice " + juce::String (session.getEditVoice() + 1),
+    pixel::draw (g, drums ? juce::String ("RND  Drum Set") : "RND  Voice " + juce::String (session.getEditVoice() + 1),
                  juce::Rectangle<float> ((float) kPad, (float) kPad - 2.0f, (float) (getWidth() - 2 * kPad), (float) kTitleH - 8.0f), 2.0f);
 }
 

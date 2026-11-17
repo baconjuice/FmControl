@@ -86,6 +86,47 @@ int main()
     automation.unassign (2, "algorithm");
     CHECK (params[5]->getName (100) == "6: (unused)");
 
+    // Drum mode: its own edit buffer and bank, voices untouched.
+    {
+        const auto& D = fm::drumParams();
+        const auto voiceBefore = session.edit();
+        CHECK (session.slotCount() == Session::kSlots);
+        session.setDrumMode (true);
+        CHECK (session.isDrumMode() && session.slotCount() == fm::kDrumSetsPerBank);
+        CHECK (session.currentSlotName (2) == "A03");
+        session.getDrumTarget().setParam (D.get ("bd.freq"), 77);
+        CHECK (session.drums().getRaw (D.get ("bd.freq")) == 77);
+        CHECK (session.edit() == voiceBefore);
+        session.setBankNumber (3);
+        CHECK (session.getBankNumber() == 3);
+        session.setSlot (5, fm::makeInitDrums());
+        CHECK (session.slot (5).has_value());
+
+        session.randomize ("all", 1.0f);
+        CHECK (session.canUndoRandom());
+        session.undoRandom();
+        CHECK (session.drums().getRaw (D.get ("bd.freq")) == 77);
+
+        // State round trip keeps the kit, its bank and the mode.
+        const auto sessionState = session.toValueTree();
+        session.setEditVoice (1);
+        CHECK (! session.isDrumMode() && session.getBankNumber() == 0 && ! session.slot (5).has_value());
+        session.fromValueTree (sessionState);
+        CHECK (session.isDrumMode() && session.getBankNumber() == 3 && session.slot (5).has_value());
+        CHECK (session.drums().getRaw (D.get ("bd.freq")) == 77);
+
+        // A drum-set file switches to drum mode and fills the drum list.
+        juce::String msg;
+        session.setEditVoice (0);
+        CHECK (session.loadSyx (juce::File (FIXTURES_DIR "/midibox_fm_drumsets.syx"), msg));
+        CHECK (session.isDrumMode());
+        int loaded = 0;
+        for (int i = 0; i < session.slotCount(); ++i)
+            loaded += session.slot (i).has_value() ? 1 : 0;
+        CHECK (loaded == 16);
+        session.setEditVoice (0);
+    }
+
     std::printf (failures == 0 ? "All automation tests passed\n" : "%d failure(s)\n", failures);
     return failures == 0 ? 0 : 1;
 }

@@ -41,6 +41,18 @@ Output is in `build/FmControl_artefacts/Release/`, in the `Standalone/`, `AU/` a
 6. **Keys**: MIDI from your keyboard or the DAW track goes to the box, by default on the edited voice's channel
    (channels 1-4 for voices 1-4 in the default ensemble).
 
+Drum sets: press **DR** next to the voice buttons. The editor then shows the drum set (the OPL3 rhythm
+section: bass drum modulator and carrier, open and closed hi-hat, snare, tom, cymbal) with each instrument's
+waveform, multiplier, volume and envelope, the pitch and pitch drop of bass drum, hi-hat and tom, the three
+feedback settings, FM/AM for the bass drum, the audio outputs and the key range of each drum. The librarian
+switches to the bank's 16 drum sets, and **Get / Send**, **Init**, **Open / Save .syx** and **Random...** work on
+the drum set. **Play** plays a bar of drums with the kit. The box plays drums on MIDI channel 16 (firmware
+default); a Program Change on channel 16 picks a stored set (bank x 16 + set). Drum sets have no names on the
+box. **Init Kit** is the first preset drum set; the firmware's 16 preset sets
+(`presets/bank1/midibox_fm_drumsets.syx` in the firmware package) open with **Open .syx**. The drum random
+generator is FmControl's own (the box has none): it keeps attacks fast, releases moderate, the instruments
+audible and the bass drum's multipliers low, and never changes key ranges or outputs.
+
 Random generator: **Random...** in the patch header works like the RND menu on the box, for the voice being
 edited. Click a section (All, OP, LFO, EG5, WT Config, WT Steps) to roll it. It follows the firmware's rules
 (`mbfm_rnd.inc`): OP1/OP3 get low multipliers and high volume, OP2/OP4 stay at full volume, sustain stays
@@ -74,7 +86,8 @@ control for them.
 - The parameter tables follow `midibox_fm_cc_voice.txt` and the firmware sources in
   [midibox/mios8](https://github.com/midibox/mios8).
 - `Source/fm/CcNames.cpp` (parameter names) is generated from `midibox_fm_cc_voice.txt`.
-- `Source/fm/InitPatch.cpp` and `Tests/fixtures/midibox_fm_voices.syx` come from the firmware's preset bank.
+- `Source/fm/InitPatch.cpp` and `Tests/fixtures/midibox_fm_voices.syx` come from the firmware's preset bank,
+  the init kit in `Source/fm/Drums.cpp` and `Tests/fixtures/midibox_fm_drumsets.syx` from its preset drum sets.
 
 Those files are Copyright 1998–2007 Thorsten Klose (tk@midibox.org) and are "licensed for personal
 non-commercial use only". FmControl is a free, non-commercial hobby project. Please don't use any of it commercially.

@@ -1,11 +1,14 @@
 #pragma once
 
 // Editor state: the patches of the box's four voices (one is edited at a
-// time), the bank of 128 patches shown in the librarian, and the operations
-// that move patches between them, files and the MIDIbox FM.
+// time) and its drum set, the banks shown in the librarian (128 voice
+// patches or 16 drum sets), and the operations that move patches between
+// them, files and the MIDIbox FM. In drum mode the library, the header
+// buttons and the edit-buffer actions work on drum sets instead of voices.
 
 #include "ParamTarget.h"
 #include "device/FmDevice.h"
+#include "fm/Drums.h"
 #include "fm/Params.h"
 #include "fm/SyxFile.h"
 
@@ -16,6 +19,24 @@
 #include <random>
 
 class MidiLearn;
+class Session;
+
+// The drum set as a ParamTarget, so the drum editor's controls bind to it.
+// No MIDI learn or DAW slots for drums (yet).
+class DrumTarget : public ParamTarget
+{
+public:
+    explicit DrumTarget (Session& s) : session (s) {}
+    uint8_t getByte (int addr) const override;
+    int getParam (const fm::ParamDef& p) const override;
+    void setParam (const fm::ParamDef& p, int raw, uint8_t writeOption = 0) override;
+    int defaultRaw (const fm::ParamDef& p) const override;
+    void replaced() { notifyReplaced(); }
+    void changed (const std::vector<uint16_t>& a) { notifyChanged (a); }
+
+private:
+    Session& session;
+};
 
 class Session : public ParamTarget,
                 private FmDevice::Listener
@@ -46,9 +67,20 @@ public:
     int getVoiceParam (int voice, const fm::ParamDef& p) const { return voices[(size_t) (voice & 3)].getRaw (p); }
     void setVoiceParam (int voice, const fm::ParamDef& p, int raw);
 
-    // Replace the edited voice's patch (sends it to the box when live).
+    // ---- drum set ---------------------------------------------------------
+    bool isDrumMode() const { return drumMode; }
+    void setDrumMode (bool editDrums);      // fetches the playing set from the box the first time
+    const fm::Patch& drums() const { return drumKit; }
+    DrumTarget& getDrumTarget() { return drumTarget; }
+    void setDrumParam (const fm::ParamDef& p, int raw);
+    void playDrumBeat();                    // one bar on the drum channel, using the kit's key ranges
+
+    // What the header and library work on: the edited voice or the drum set.
+    const fm::Patch& current() const { return drumMode ? drumKit : edit(); }
+
+    // Replace the edited voice's patch or the drum set (sends it to the box when live).
     void loadIntoEditor (const fm::Patch& p, int fromSlot = -1);
-    int editorSourceSlot() const { return sourceSlot[(size_t) editVoice]; }
+    int editorSourceSlot() const { return drumMode ? drumSourceSlot : sourceSlot[(size_t) editVoice]; }
 
     bool isLive() const { return live; }
     void setLive (bool shouldSendEdits) { live = shouldSendEdits; }
@@ -59,10 +91,10 @@ public:
     // Random generator (like the box's RND menu) for the edited voice. Keeps
     // the previous patches per voice so a roll can be undone.
     void randomize (const std::string& section, float amount);
-    bool canUndoRandom() const { return ! randomHistory[(size_t) editVoice].empty(); }
+    bool canUndoRandom() const { return ! historyRef().empty(); }
     void undoRandom();
     void storeVoiceOnBox();             // the box's own "store" for the edited voice
-    void playNote (bool on);            // Play button: middle C on the edited voice's channel
+    void playNote (bool on);            // Play button: middle C on the edited voice's channel (drums: a beat)
     void allNotesOff();
     void ping();
 
@@ -70,11 +102,13 @@ public:
     bool keysFollowVoice() const { return followVoice; }
     void setKeysFollowVoice (bool f);
 
-    // ---- bank / librarian -------------------------------------------------
-    const std::optional<fm::Patch>& slot (int i) const { return slots[(size_t) i]; }
+    // ---- bank / librarian (voice patches, or drum sets in drum mode) ------
+    int slotCount() const { return drumMode ? fm::kDrumSetsPerBank : kSlots; }
+    const std::optional<fm::Patch>& slot (int i) const { return slotsFor (drumMode)[(size_t) i]; }
     void setSlot (int i, std::optional<fm::Patch> p);
-    int getBankNumber() const { return bankNumber; }
+    int getBankNumber() const { return drumMode ? drumBankNumber : bankNumber; }
     void setBankNumber (int b);
+    juce::String currentSlotName (int slot) const { return slotName (getBankNumber(), slot, drumMode); }
 
     void fetchSlot (int i, bool thenEdit);
     void fetchBank();
@@ -113,17 +147,28 @@ public:
     float getProgress() const { return progress; }
     const juce::StringArray& getLog() const { return logLines; }
 
-    static juce::String slotName (int bank, int slot); // "B012"
+    static juce::String slotName (int bank, int slot, bool drums = false); // "B012", drum set "B03"
 
 private:
     void fmUnsolicitedDump (const fm::sysex::Message&) override;
     void fmLog (const juce::String&) override;
 
     fm::Patch& editRef() { return voices[(size_t) editVoice]; }
+    fm::Patch& currentRef() { return drumMode ? drumKit : editRef(); }
+    std::vector<fm::Patch>& historyRef() { return drumMode ? drumHistory : randomHistory[(size_t) editVoice]; }
+    const std::vector<fm::Patch>& historyRef() const { return drumMode ? drumHistory : randomHistory[(size_t) editVoice]; }
+    std::vector<std::optional<fm::Patch>>& slotsFor (bool d) { return d ? drumSlots : slots; }
+    const std::vector<std::optional<fm::Patch>>& slotsFor (bool d) const { return d ? drumSlots : slots; }
+    fm::sysex::Bytes requestSlot (bool d, int bank, int i) const;
+    fm::sysex::Bytes writeSlot (bool d, int bank, int i, const fm::Patch& p) const;
+    juce::String partName() const; // "voice 2" / "drum set"
+    void fireDrumsReplaced();
+    void fetchDrums();
+    void sendDrums();
     void fireReplaced();
     void fireChanged (const std::vector<uint16_t>& addresses);
-    void fetchNext (int i, int endExclusive, int got, int failed);
-    void writeNext (std::vector<int> remaining, int done, int failed, int total);
+    void fetchNext (bool drums, int i, int endExclusive, int got, int failed);
+    void writeNext (bool drums, std::vector<int> remaining, int done, int failed, int total);
     void updateKeyboardChannel();
     void sendEditBufferSoon(); // quick repeated rolls only send the last result
 
@@ -138,8 +183,18 @@ private:
     std::mt19937 rng { std::random_device{}() };
     int sendGeneration = 0;
 
-    std::array<std::optional<fm::Patch>, kSlots> slots;
-    int bankNumber = 0;
+    bool drumMode = false;
+    fm::Patch drumKit = fm::makeInitDrums();
+    bool drumKnown = false;
+    int drumSourceSlot = -1;
+    std::vector<fm::Patch> drumHistory;
+    DrumTarget drumTarget { *this };
+    struct BeatPlayer;
+    std::unique_ptr<BeatPlayer> beat;
+
+    std::vector<std::optional<fm::Patch>> slots = std::vector<std::optional<fm::Patch>> (kSlots);
+    std::vector<std::optional<fm::Patch>> drumSlots = std::vector<std::optional<fm::Patch>> (fm::kDrumSetsPerBank);
+    int bankNumber = 0, drumBankNumber = 0;
 
     bool busy = false;
     bool cancelRequested = false;

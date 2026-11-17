@@ -28,6 +28,13 @@ Bytes writeStored (uint8_t device, uint8_t bank, uint8_t patch, const Patch& p);
 Bytes writeVoice (uint8_t device, int voice, const Patch& p);
 Bytes parameterWrite (uint8_t device, int voice, uint8_t addr, uint8_t value);
 Bytes storeVoice (uint8_t device, int voice);    // voice's RAM patch -> its current slot
+
+// Drum sets (same dump format, see Drums.h). "Ram" = the set playing now.
+Bytes requestDrums (uint8_t device, uint8_t bank, uint8_t set);
+Bytes requestDrumsRam (uint8_t device);
+Bytes writeDrums (uint8_t device, uint8_t bank, uint8_t set, const Patch& p);
+Bytes writeDrumsRam (uint8_t device, const Patch& p);
+Bytes drumParameterWrite (uint8_t device, uint8_t addr, uint8_t value);
 Bytes ping (uint8_t device);
 
 struct Message
@@ -45,6 +52,8 @@ struct Message
     Patch patch;
 
     bool isVoiceRam() const { return (type & 0xfc) == type::VoiceRam; }
+    bool isDrums() const { return (type & 0xf7) == type::Drum; }
+    bool isDrumsRam() const { return type == type::DrumRam; }
     int voice() const { return type & 0x03; }
 };
 

@@ -8,6 +8,12 @@ namespace ui
 {
 juce::String signedText (int v);
 juce::String noteText (int midiNote);
+juce::String multText (int v); // OPL frequency multiplier register -> "x2"
+
+// Black "scope" screen with a dotted grid, behind graphs and diagrams.
+void drawScope (juce::Graphics& g, juce::Rectangle<float> r);
+// A curve given as normalised points (0..1), filled underneath.
+void drawCurve (juce::Graphics& g, juce::Rectangle<float> r, const std::vector<juce::Point<float>>& pts, juce::Colour c);
 
 std::unique_ptr<juce::ComboBox> makeSelector (std::initializer_list<const char*> items, int initial = 1);
 std::unique_ptr<juce::Label> makeLabel (const juce::String& text, bool heading = false);

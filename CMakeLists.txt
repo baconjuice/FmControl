@@ -18,7 +18,8 @@ add_library(fm_core STATIC
     Source/fm/CcNames.cpp
     Source/fm/SysEx.cpp
     Source/fm/SyxFile.cpp
-    Source/fm/Randomizer.cpp)
+    Source/fm/Randomizer.cpp
+    Source/fm/Drums.cpp)
 target_include_directories(fm_core PUBLIC Source)
 target_compile_features(fm_core PUBLIC cxx_std_20)
 
@@ -50,6 +51,7 @@ target_sources(FmControl PRIVATE
     Source/model/MidiLearn.cpp
     Source/ui/LookAndFeel.cpp
     Source/ui/RandomPanel.cpp
+    Source/ui/DrumEditor.cpp
     Source/ui/PixelFont.cpp
     Source/ui/ParamControls.cpp
     Source/ui/EditorCommon.cpp
@@ -94,7 +96,8 @@ juce_add_console_app(automation_tests PRODUCT_NAME "automation_tests")
 target_sources(automation_tests PRIVATE Tests/AutomationTests.cpp Source/plugin/Automation.cpp Source/device/FmDevice.cpp
                Source/device/PacedSysEx.cpp Source/model/Session.cpp Source/model/MidiLearn.cpp)
 target_include_directories(automation_tests PRIVATE Source)
-target_compile_definitions(automation_tests PRIVATE JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0 JUCE_MODAL_LOOPS_PERMITTED=1)
+target_compile_definitions(automation_tests PRIVATE JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0 JUCE_MODAL_LOOPS_PERMITTED=1
+                           FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/Tests/fixtures")
 target_link_libraries(automation_tests PRIVATE fm_core juce::juce_audio_processors juce::juce_audio_devices
                       juce::juce_data_structures juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
 add_test(NAME automation_tests COMMAND automation_tests)

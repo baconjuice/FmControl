@@ -8,7 +8,7 @@ namespace ui
 {
 // The random generator, shown in a call-out from the patch header: one
 // button per section (like the box's RND menu), an amount slider for gentle
-// variations, and undo. It works on the voice being edited.
+// variations, and undo. It works on the voice being edited, or the drum set.
 class RandomPanel : public juce::Component,
                     private Session::Listener
 {
@@ -29,5 +29,6 @@ private:
     juce::Label amountLabel, hint;
     juce::Slider amount;
     juce::TextButton undoButton { "Undo" };
+    bool drums = false; // working on the drum set (fixed while the panel is open)
 };
 } // namespace ui

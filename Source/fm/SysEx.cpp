@@ -73,6 +73,37 @@ Bytes storeVoice (uint8_t device, int voice)
     return b;
 }
 
+Bytes requestDrums (uint8_t device, uint8_t bank, uint8_t set)
+{
+    auto b = header (device, 0x01);
+    b.insert (b.end(), { type::Drum, (uint8_t) (bank & 0x07), (uint8_t) (set & 0x0f), 0xf7 });
+    return b;
+}
+
+Bytes requestDrumsRam (uint8_t device)
+{
+    auto b = header (device, 0x01);
+    b.insert (b.end(), { type::DrumRam, 0x00, 0x00, 0xf7 });
+    return b;
+}
+
+Bytes writeDrums (uint8_t device, uint8_t bank, uint8_t set, const Patch& p)
+{
+    return dump (device, type::Drum, bank, (uint8_t) (set & 0x0f), p);
+}
+
+Bytes writeDrumsRam (uint8_t device, const Patch& p)
+{
+    return dump (device, type::DrumRam, 0, 0, p);
+}
+
+Bytes drumParameterWrite (uint8_t device, uint8_t addr, uint8_t value)
+{
+    auto b = header (device, 0x06);
+    b.insert (b.end(), { type::DrumRam, (uint8_t) (addr >> 7), (uint8_t) (addr & 0x7f), (uint8_t) (value & 0x7f), 0xf7 });
+    return b;
+}
+
 Bytes ping (uint8_t device)
 {
     auto b = header (device, 0x0f);
@@ -109,7 +140,9 @@ std::optional<Message> parse (const uint8_t* data, size_t size)
             m.type = data[7];
             m.bank = data[8];
             m.patchNumber = data[9];
-            if ((m.type & 0xf4) != 0x00) // voice types 00-03 / 08-0B only
+            const bool voice = (m.type & 0xf4) == 0x00;          // 00-03 / 08-0B
+            const bool drums = (m.type & 0xf7) == type::Drum;    // 10 / 18
+            if (! voice && ! drums)
                 return m;
             const uint8_t* body = data + 10;
             for (int i = 0; i < kPatchSize; ++i)

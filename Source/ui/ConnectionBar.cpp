@@ -63,11 +63,8 @@ ConnectionBar::ConnectionBar (Session& s) : session (s)
     liveButton.setTooltip ("When on, every edit is sent to the MIDIbox FM immediately");
     liveButton.onClick = [this] { session.setLive (liveButton.getToggleState()); };
 
-    getButton.setTooltip ("Read the patch the edited voice is playing on the MIDIbox FM");
     getButton.onClick = [this] { session.fetchEditBuffer(); };
-    sendButton.setTooltip ("Send the whole patch in the editor to the edited voice (not stored)");
     sendButton.onClick = [this] { session.sendEditBuffer(); };
-    playButton.setTooltip ("Hold to play a test note (C3) on the edited voice");
     playButton.onStateChange = [this]
     {
         const bool down = playButton.isDown();
@@ -83,6 +80,8 @@ ConnectionBar::ConnectionBar (Session& s) : session (s)
         addAndMakeVisible (b);
 
     session.device.addListener (this);
+    session.addListener (this);
+    refreshPart();
     deviceListConnection = juce::MidiDeviceListConnection::make ([this] { refreshPorts(); });
     refreshPorts();
     startTimerHz (20);
@@ -90,6 +89,7 @@ ConnectionBar::ConnectionBar (Session& s) : session (s)
 
 ConnectionBar::~ConnectionBar()
 {
+    session.removeListener (this);
     session.device.removeListener (this);
 }
 
@@ -131,6 +131,19 @@ void ConnectionBar::fmActivity (bool outgoing)
 {
     (outgoing ? lastOut : lastIn) = juce::Time::getMillisecondCounter();
     repaint (outgoing ? outLed.expanded (6, 12) : inLed.expanded (6, 12));
+}
+
+void ConnectionBar::refreshPart()
+{
+    const bool d = session.isDrumMode();
+    getButton.setButtonText (d ? "Get Drums" : "Get Voice");
+    sendButton.setButtonText (d ? "Send Drums" : "Send Voice");
+    getButton.setTooltip (d ? "Read the drum set the MIDIbox FM is playing" : "Read the patch the edited voice is playing on the MIDIbox FM");
+    sendButton.setTooltip (d ? "Send the drum set in the editor to the MIDIbox FM (not stored)"
+                             : "Send the whole patch in the editor to the edited voice (not stored)");
+    playButton.setTooltip (d ? "Play one bar of drums on MIDI channel 16 with this kit"
+                             : "Hold to play a test note (C3) on the edited voice");
+    refreshKeys();
 }
 
 void ConnectionBar::timerCallback()
