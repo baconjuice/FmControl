@@ -70,11 +70,14 @@ edited. Click a section (All, OP, LFO, EG5, WT Config, WT Steps) to roll it. It 
 audible, and LFO/EG5 never modulate the OP2/OP4 volume. With **Amount** below 100% it only nudges the current
 sound. **Undo** steps back through the rolls (per voice).
 
-DAW automation (plugin): 16 automatable parameters, "slots". The defaults cover voice 1: the four operator
+DAW automation (plugin): 24 automatable parameters, "slots". Slots 1-16 are for the voices; the defaults cover voice 1: the four operator
 volumes, feedback, OP1/OP3 multiplier and decay, LFO1 rate and pitch depth, LFO2 rate, EG5 attack and decay,
 wavetable rate and finetune. Right-click any control and choose **DAW Automation Slot** to put it on a slot;
 the slot drives that parameter of the voice you were editing (shown as "V2 OP1 Volume" and so on), so
 automation keeps working when you switch voices in the editor.
+Slots 17-24 are for the drum set (shown as "DR BD Pitch" and so on); the defaults are bass drum pitch and
+pitch drop, bass drum, snare, closed hi-hat and cymbal decay, and hi-hat and tom pitch. Drum controls can
+only go on drum slots and voice controls on voice slots.
 
 MIDI learn: right-click any knob, button or menu and choose **MIDI Learn**, then move a controller. A mapped
 controller always edits the voice you are editing; controllers learned on the drum set page always edit the

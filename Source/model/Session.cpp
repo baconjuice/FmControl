@@ -113,6 +113,7 @@ void DrumTarget::setParam (const ParamDef& p, int raw, uint8_t) { session.setDru
 int DrumTarget::defaultRaw (const ParamDef& p) const { return makeInitDrums().getRaw (p); }
 MidiLearn* DrumTarget::getMidiLearn() { return session.getMidiLearn(); }
 int DrumTarget::learnScope() const { return MidiLearn::kDrumScope; }
+AutomationLink* DrumTarget::getAutomation() { return session.getAutomation(); }
 
 uint8_t EnsembleTarget::getByte (int addr) const { return session.getEnsemble().byte (addr); }
 int EnsembleTarget::getParam (const ParamDef& p) const { return session.getEnsemble().getRaw (p); }

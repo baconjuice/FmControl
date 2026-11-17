@@ -80,10 +80,11 @@ void ParamControl::showLearnMenu()
         const uint8_t wopt = writeOption ? writeOption() : (uint8_t) 0;
         juce::PopupMenu slotsMenu;
         for (int i = 0; i < au->numSlots(); ++i)
-            slotsMenu.addItem (au->slotLabel (i), true, i == current,
-                               [au, i, ascope, id, wopt] { au->assign (i, ascope, id, wopt); });
+            if (au->slotAccepts (i, ascope))
+                slotsMenu.addItem (au->slotLabel (i), true, i == current,
+                                   [au, i, ascope, id, wopt] { au->assign (i, ascope, id, wopt); });
         slotsMenu.addSeparator();
-        slotsMenu.addItem ("Reset All Slots to Defaults", [au, ascope] { au->resetToDefaults (ascope); });
+        slotsMenu.addItem ("Reset These Slots to Defaults", [au, ascope] { au->resetToDefaults (ascope); });
         menu.addSeparator();
         menu.addSubMenu (current >= 0 ? "DAW Automation: Slot " + juce::String (current + 1) : juce::String ("DAW Automation Slot"),
                          slotsMenu);

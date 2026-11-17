@@ -43,8 +43,14 @@ int main()
     CHECK (params.size() == Automation::kSlots);
 
     // Every default resolves to a real parameter.
-    for (auto& a : Automation::defaults())
-        CHECK (a.paramId.empty() || fm::voiceParams().find (a.paramId) != nullptr);
+    const auto defaultSlots = Automation::defaults();
+    for (int i = 0; i < Automation::kSlots; ++i)
+    {
+        const auto& a = defaultSlots[(size_t) i];
+        const bool drum = Automation::isDrumSlot (i);
+        CHECK ((a.voice == Automation::kDrums) == drum);
+        CHECK (a.paramId.empty() || (drum ? fm::drumParams() : fm::voiceParams()).find (a.paramId) != nullptr);
+    }
 
     const auto& T = fm::voiceParams();
     CHECK (params[0]->getName (100) == "1: V1 OP1 Volume");
@@ -85,6 +91,64 @@ int main()
     // Unassign.
     automation.unassign (2, "algorithm");
     CHECK (params[5]->getName (100) == "6: (unused)");
+
+    // Drum slots 17-24: host <-> drum set, whatever part is edited.
+    {
+        const auto& D = fm::drumParams();
+        const int drums = Automation::kDrums;
+        CHECK (params.size() == 24);
+        CHECK (params[16]->getName (100) == "17: DR BD Pitch");
+        CHECK (params[19]->getName (100) == "20: DR SD Decay");
+        CHECK (automation.slotFor (drums, "bd.freq") == 16);
+        CHECK (automation.slotAccepts (16, drums) && ! automation.slotAccepts (16, 0));
+        CHECK (automation.slotAccepts (3, 0) && ! automation.slotAccepts (3, drums));
+        CHECK (session.getDrumTarget().getAutomation() == &automation);
+        CHECK (session.getDrumTarget().automationScope() == drums);
+
+        params[16]->setValue (1.0f);
+        pump();
+        CHECK (session.drums().getRaw (D.get ("bd.freq")) == 127);
+        CHECK (! session.isDrumMode()); // voices are still edited
+
+        session.setDrumParam (D.get ("sd.decay"), 15);
+        CHECK (std::abs (params[19]->getValue() - 1.0f) < 1.0e-4f);
+        session.setDrumParam (D.get ("sd.decay"), 0);
+        CHECK (params[19]->getValue() < 1.0e-4f);
+
+        // Drum parameters only go on drum slots, voice parameters only on voice slots.
+        automation.assign (2, drums, "tom.decr", 0);
+        CHECK (automation.slotFor (drums, "tom.decr") == -1);
+        automation.assign (20, 0, "op1.mult", 0);
+        CHECK (automation.slotFor (0, "op1.mult") == -1);
+        automation.assign (20, drums, "tom.decr", 0);
+        CHECK (params[20]->getName (100) == "21: DR TOM Pitch Drop");
+        automation.unassign (drums, "tom.decr");
+        CHECK (params[20]->getName (100) == "21: (unused drum slot)");
+
+        // State keeps an unused drum slot unused; resetting drums leaves voice slots alone.
+        automation.assign (5, 1, "feedback", 0);
+        const auto st = automation.toValueTree();
+        automation.resetToDefaults (drums);
+        CHECK (automation.slotFor (drums, "hhc.decay") == 20 && automation.slotFor (1, "feedback") == 5);
+        automation.fromValueTree (st);
+        CHECK (params[20]->getName (100) == "21: (unused drum slot)");
+
+        // A state saved with 16 slots (before drum slots) keeps the drum defaults.
+        juce::ValueTree old ("Automation");
+        for (int i = 0; i < 16; ++i)
+        {
+            juce::ValueTree s ("Slot");
+            s.setProperty ("slot", i, nullptr);
+            s.setProperty ("voice", 0, nullptr);
+            s.setProperty ("param", i == 0 ? "op2.volume" : "", nullptr);
+            old.appendChild (s, nullptr);
+        }
+        automation.resetToDefaults (drums);
+        automation.fromValueTree (old);
+        CHECK (automation.slotFor (0, "op2.volume") == 0 && automation.slotFor (drums, "bd.freq") == 16);
+        automation.resetToDefaults (0);
+        CHECK (automation.slotFor (0, "op1.volume") == 0);
+    }
 
     // Drum mode: its own edit buffer and bank, voices untouched.
     {

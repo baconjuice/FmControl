@@ -1,7 +1,13 @@
 #include "Automation.h"
+#include "fm/Drums.h"
 #include "fm/Params.h"
 
 #include <cmath>
+
+namespace
+{
+const fm::ParamTable& tableFor (int voice) { return voice == Automation::kDrums ? fm::drumParams() : fm::voiceParams(); }
+} // namespace
 
 // ---------------------------------------------------------------------------
 class Automation::SlotParameter : public juce::AudioParameterFloat
@@ -40,6 +46,7 @@ Automation::Automation (juce::AudioProcessor& p, Session& s) : processor (p), se
         processor.addParameter (param.release());
     }
     session.addListener (this);
+    session.getDrumTarget().addTargetListener (this);
     session.setAutomation (this);
     editReplaced();
     startTimer (15);
@@ -49,6 +56,7 @@ Automation::~Automation()
 {
     stopTimer();
     session.setAutomation (nullptr);
+    session.getDrumTarget().removeTargetListener (this);
     session.removeListener (this);
 }
 
@@ -57,7 +65,9 @@ std::array<Automation::Assignment, Automation::kSlots> Automation::defaults()
     return { { { 0, "op1.volume" }, { 0, "op2.volume" }, { 0, "op3.volume" }, { 0, "op4.volume" },
                { 0, "feedback" }, { 0, "op1.mult" }, { 0, "op3.mult" }, { 0, "op1.decay" },
                { 0, "op3.decay" }, { 0, "lfo1.rate" }, { 0, "lfo1.pitch" }, { 0, "lfo2.rate" },
-               { 0, "eg5.attack" }, { 0, "eg5.decay1" }, { 0, "wt.rate" }, { 0, "finetune" } } };
+               { 0, "eg5.attack" }, { 0, "eg5.decay1" }, { 0, "wt.rate" }, { 0, "finetune" },
+               { kDrums, "bd.freq" }, { kDrums, "bd.decr" }, { kDrums, "bdc.decay" }, { kDrums, "sd.decay" },
+               { kDrums, "hhc.decay" }, { kDrums, "hh.freq" }, { kDrums, "tom.freq" }, { kDrums, "cym.decay" } } };
 }
 
 Automation::Assignment Automation::assignment (int slot) const
@@ -69,7 +79,12 @@ Automation::Assignment Automation::assignment (int slot) const
 const fm::ParamDef* Automation::defFor (int slot) const
 {
     const auto a = assignment (slot);
-    return a.paramId.empty() ? nullptr : fm::voiceParams().find (a.paramId);
+    return a.paramId.empty() ? nullptr : tableFor (a.voice).find (a.paramId);
+}
+
+int Automation::currentRaw (const Assignment& a, const fm::ParamDef& d) const
+{
+    return a.voice == kDrums ? session.drums().getRaw (d) : session.getVoiceParam (a.voice, d);
 }
 
 int Automation::slotFor (int voice, const std::string& paramId) const
@@ -84,10 +99,16 @@ int Automation::slotFor (int voice, const std::string& paramId) const
 juce::String Automation::slotLabel (int slot) const
 {
     const auto a = assignment (slot);
-    const auto* d = a.paramId.empty() ? nullptr : fm::voiceParams().find (a.paramId);
+    const auto* d = defFor (slot);
     juce::String label = juce::String (slot + 1) + ": ";
     if (d == nullptr)
-        return label + "(unused)";
+        return label + (isDrumSlot (slot) ? "(unused drum slot)" : "(unused)");
+    if (a.voice == kDrums)
+    {
+        // "bd.freq" -> "DR BD Pitch", "sd.decay" -> "DR SD Decay".
+        const juce::String id (d->id);
+        return label + "DR " + id.upToFirstOccurrenceOf (".", false, false).toUpperCase() + " " + juce::String (d->name);
+    }
 
     // "op3.volume" on voice 1 -> "V1 OP3 Volume", "wt.rate" -> "V1 WT Rate".
     const juce::String id (d->id), name (d->name);
@@ -116,13 +137,13 @@ juce::String Automation::valueText (int slot, float v) const
 
 void Automation::assign (int slot, int voice, const std::string& paramId, uint8_t)
 {
-    if (slot < 0 || slot >= kSlots || voice < 0 || voice > 3)
+    if (slot < 0 || slot >= kSlots || voice < 0 || voice > kDrums || ! slotAccepts (slot, voice))
         return;
     {
         const juce::ScopedLock sl (lock);
         for (auto& a : slots)
             if (a.voice == voice && a.paramId == paramId)
-                a = {};
+                a.paramId.clear(); // the slot stays a voice or drum slot
         slots[(size_t) slot] = { voice, paramId };
     }
     assignmentsChanged();
@@ -134,16 +155,19 @@ void Automation::unassign (int voice, const std::string& paramId)
         const juce::ScopedLock sl (lock);
         for (auto& a : slots)
             if (a.voice == voice && a.paramId == paramId)
-                a = {};
+                a.paramId.clear(); // the slot stays a voice or drum slot
     }
     assignmentsChanged();
 }
 
-void Automation::resetToDefaults (int)
+void Automation::resetToDefaults (int voice)
 {
     {
         const juce::ScopedLock sl (lock);
-        slots = defaults();
+        const auto d = defaults();
+        for (int i = 0; i < kSlots; ++i)
+            if (slotAccepts (i, voice))
+                slots[(size_t) i] = d[(size_t) i];
     }
     assignmentsChanged();
 }
@@ -172,10 +196,10 @@ void Automation::pushToHost (int slot)
 {
     auto* p = params[(size_t) slot];
     const auto a = assignment (slot);
-    const auto* d = a.paramId.empty() ? nullptr : fm::voiceParams().find (a.paramId);
+    const auto* d = defFor (slot);
     if (p == nullptr || d == nullptr || d->maxRaw() <= 0)
         return;
-    const float v = (float) session.getVoiceParam (a.voice, *d) / (float) d->maxRaw();
+    const float v = (float) currentRaw (a, *d) / (float) d->maxRaw();
     if (std::abs (p->get() - v) > 1.0e-6f)
     {
         p->setValueNotifyingHost (v);
@@ -192,9 +216,18 @@ void Automation::editReplaced()
 
 void Automation::editChanged (const std::vector<uint16_t>& addresses)
 {
+    changedFor (session.getEditVoice(), addresses);
+}
+
+void Automation::targetChanged (const std::vector<uint16_t>& addresses)
+{
+    changedFor (kDrums, addresses);
+}
+
+void Automation::changedFor (int voice, const std::vector<uint16_t>& addresses)
+{
     if (applyingFromHost)
         return;
-    const int voice = session.getEditVoice();
     for (int i = 0; i < kSlots; ++i)
     {
         const auto a = assignment (i);
@@ -214,14 +247,17 @@ void Automation::timerCallback()
         if (p == nullptr || ! p->dirty.exchange (false))
             continue;
         const auto a = assignment (i);
-        const auto* d = a.paramId.empty() ? nullptr : fm::voiceParams().find (a.paramId);
+        const auto* d = defFor (i);
         if (d == nullptr)
             continue;
         const int raw = juce::jlimit (0, d->maxRaw(), juce::roundToInt (p->get() * (float) d->maxRaw()));
-        if (raw == session.getVoiceParam (a.voice, *d))
+        if (raw == currentRaw (a, *d))
             continue;
         const juce::ScopedValueSetter<bool> svs (applyingFromHost, true);
-        session.setVoiceParam (a.voice, *d, raw);
+        if (a.voice == kDrums)
+            session.setDrumParam (*d, raw);
+        else
+            session.setVoiceParam (a.voice, *d, raw);
     }
 }
 
@@ -249,10 +285,17 @@ void Automation::fromValueTree (const juce::ValueTree& v)
         for (const auto& c : v)
         {
             const int i = c.getProperty ("slot", -1), voice = c.getProperty ("voice", 0);
-            if (i < 0 || i >= kSlots || voice < 0 || voice > 3)
+            if (i < 0 || i >= kSlots || voice < 0 || voice > kDrums)
                 continue;
             const auto id = c.getProperty ("param").toString().toStdString();
-            if (! id.empty() && fm::voiceParams().find (id) == nullptr)
+            if (! id.empty() && tableFor (voice).find (id) == nullptr)
+                continue;
+            if (id.empty())
+            {
+                slots[(size_t) i] = { isDrumSlot (i) ? kDrums : 0, {} };
+                continue;
+            }
+            if (! slotAccepts (i, voice))
                 continue;
             slots[(size_t) i] = { voice, id };
         }
